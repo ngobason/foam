@@ -1,4 +1,4 @@
-import { parseLivePreview, getBoldMarkers } from './parser';
+import { parseLivePreview, getBoldMarkers, getItalicMarkers } from './parser';
 
 describe('Live Preview Markdown Parser', () => {
   test('should recognize heading levels', () => {
@@ -112,6 +112,67 @@ describe('Live Preview Bold Markers', () => {
 
     const elements = parseLivePreview(markdown);
     const markers = getBoldMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+});
+
+describe('Live Preview Italic Markers', () => {
+  test('should identify opening and closing italic markers', () => {
+    const markdown = 'Text *Hello* end';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getItalicMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(2);
+
+    // Opening *
+    expect(markdown.slice(markers[0].start, markers[0].end)).toBe('*');
+
+    // Closing *
+    expect(markdown.slice(markers[1].start, markers[1].end)).toBe('*');
+
+    const italic = elements.find(e => e.type === 'italic');
+
+    expect(italic).toBeDefined();
+
+    // Both markers belong to the same Italic element.
+    for (const marker of markers) {
+      expect(marker.elementStart).toBe(italic!.start);
+      expect(marker.elementEnd).toBe(italic!.end);
+    }
+
+    // Verify exact positions.
+    expect(markers[0].start).toBe(italic!.start);
+    expect(markers[0].end).toBe(italic!.start + 1);
+
+    expect(markers[1].start).toBe(italic!.end - 1);
+    expect(markers[1].end).toBe(italic!.end);
+  });
+
+  test('should ignore incomplete italic syntax', () => {
+    const markdown = 'Text *Hello';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getItalicMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+
+  test('should skip bold-italic syntax for now', () => {
+    const markdown = '***Hello***';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getItalicMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+
+  test('should skip italic nested inside bold', () => {
+    const markdown = '**Bold *Nested* text**';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getItalicMarkers(markdown, elements);
 
     expect(markers).toHaveLength(0);
   });

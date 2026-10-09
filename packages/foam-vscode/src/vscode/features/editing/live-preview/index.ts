@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { parseLivePreview } from './parser';
+import { parseLivePreview, getBoldMarkers, getItalicMarkers } from './parser';
 import { createLivePreviewDecorations } from './decorations';
 
 /**
@@ -30,11 +30,19 @@ export default function activate(context: vscode.ExtensionContext): void {
     // 2. Read Markdown source.
     const markdown = editor.document.getText();
 
-    // 3. Parse Markdown into elements.
     const elements = parseLivePreview(markdown);
 
-    // 4. Apply decorations to the editor.
-    decorations.apply(editor, elements);
+    // Get Bold markers.
+    const boldMarkers = getBoldMarkers(markdown, elements);
+
+    // Get Italic markers.
+    const italicMarkers = getItalicMarkers(markdown, elements);
+
+    // Combine all supported Markdown markers.
+    const markers = [...boldMarkers, ...italicMarkers];
+
+    // Apply formatting and cursor-aware marker visibility.
+    decorations.apply(editor, elements, markers);
   }
 
   // Update the currently active editor.

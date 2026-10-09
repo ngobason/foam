@@ -154,3 +154,68 @@ export function getBoldMarkers(
 
   return markers;
 }
+
+/**
+ * Find opening and closing markers for simple Italic syntax.
+ *
+ * Example:
+ *   *Hello*
+ *   ^     ^
+ *
+ * Only supports single asterisk markers.
+ * Nested formatting is deferred to a later step.
+ */
+export function getItalicMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'italic') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+
+    // Skip Italic nested inside Bold.
+    const isNestedInsideBold = elements.some(
+      other =>
+        other.type === 'bold' &&
+        other.start <= element.start &&
+        other.end >= element.end
+    );
+
+    // Only support simple *Italic* syntax.
+    if (
+      raw.length <= 2 ||
+      !raw.startsWith('*') ||
+      !raw.endsWith('*') ||
+      raw.startsWith('**') ||
+      raw.endsWith('**') ||
+      markdown[element.start - 1] === '*' ||
+      markdown[element.end] === '*' ||
+      isNestedInsideBold
+    ) {
+      continue;
+    }
+
+    // Opening *
+    markers.push({
+      start: element.start,
+      end: element.start + 1,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+
+    // Closing *
+    markers.push({
+      start: element.end - 1,
+      end: element.end,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+  }
+
+  return markers;
+}
