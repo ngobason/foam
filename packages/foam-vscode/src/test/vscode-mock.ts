@@ -1811,6 +1811,11 @@ export const window = {
     return { dispose: () => {} };
   },
 
+  // Mock the editor selection change event for Live Preview.
+  onDidChangeTextEditorSelection(listener: (event: any) => any): Disposable {
+    return { dispose: () => {} };
+  },
+
   onDidChangeVisibleTextEditors(listener: (editors: any[]) => any): Disposable {
     return { dispose: () => {} };
   },

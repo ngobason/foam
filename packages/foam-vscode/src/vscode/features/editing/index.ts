@@ -7,6 +7,7 @@ import updateWikilinksCommand from './update-wikilinks';
 import copyWithoutBracketsCommand from './copy-without-brackets';
 import headingRenameProvider from './heading-rename-provider';
 import blockRenameProvider from './block-rename-provider';
+import livePreview from './live-preview';
 
 export default async function activate(
   context: ExtensionContext,
@@ -19,4 +20,5 @@ export default async function activate(
   await copyWithoutBracketsCommand(context);
   await headingRenameProvider(context, foamPromise);
   await blockRenameProvider(context, foamPromise);
+  await livePreview(context);
 }
