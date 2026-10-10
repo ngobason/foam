@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 
-import { parseLivePreview, getBoldMarkers, getItalicMarkers } from './parser';
+import {
+  parseLivePreview,
+  getBoldMarkers,
+  getItalicMarkers,
+  getInlineCodeMarkers,
+  getHeadingMarkers,
+  getBoldItalicMarkers,
+} from './parser';
 import { createLivePreviewDecorations } from './decorations';
 
 /**
@@ -32,14 +39,21 @@ export default function activate(context: vscode.ExtensionContext): void {
 
     const elements = parseLivePreview(markdown);
 
-    // Get Bold markers.
+    // Collect Markdown syntax markers.
     const boldMarkers = getBoldMarkers(markdown, elements);
-
-    // Get Italic markers.
     const italicMarkers = getItalicMarkers(markdown, elements);
+    const inlineCodeMarkers = getInlineCodeMarkers(markdown, elements);
+    const headingMarkers = getHeadingMarkers(markdown, elements);
+    const boldItalicMarkers = getBoldItalicMarkers(markdown, elements);
 
-    // Combine all supported Markdown markers.
-    const markers = [...boldMarkers, ...italicMarkers];
+    // Combine all supported markers.
+    const markers = [
+      ...boldMarkers,
+      ...italicMarkers,
+      ...inlineCodeMarkers,
+      ...headingMarkers,
+      ...boldItalicMarkers,
+    ];
 
     // Apply formatting and cursor-aware marker visibility.
     decorations.apply(editor, elements, markers);

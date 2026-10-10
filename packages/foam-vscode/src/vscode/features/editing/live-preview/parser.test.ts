@@ -1,4 +1,11 @@
-import { parseLivePreview, getBoldMarkers, getItalicMarkers } from './parser';
+import {
+  parseLivePreview,
+  getBoldMarkers,
+  getItalicMarkers,
+  getInlineCodeMarkers,
+  getHeadingMarkers,
+  getBoldItalicMarkers,
+} from './parser';
 
 describe('Live Preview Markdown Parser', () => {
   test('should recognize heading levels', () => {
@@ -173,6 +180,250 @@ describe('Live Preview Italic Markers', () => {
 
     const elements = parseLivePreview(markdown);
     const markers = getItalicMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+});
+
+describe('Live Preview Inline Code Markers', () => {
+  test('should identify opening and closing backticks', () => {
+    const markdown = 'Text `Hello` end';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getInlineCodeMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(2);
+
+    // Opening backtick
+    expect(markdown.slice(markers[0].start, markers[0].end)).toBe('`');
+
+    // Closing backtick
+    expect(markdown.slice(markers[1].start, markers[1].end)).toBe('`');
+
+    const inlineCode = elements.find(e => e.type === 'inlineCode');
+
+    expect(inlineCode).toBeDefined();
+
+    // Both markers belong to the same Inline Code element.
+    for (const marker of markers) {
+      expect(marker.elementStart).toBe(inlineCode!.start);
+      expect(marker.elementEnd).toBe(inlineCode!.end);
+    }
+
+    // Verify exact marker positions.
+    expect(markers[0].start).toBe(inlineCode!.start);
+    expect(markers[0].end).toBe(inlineCode!.start + 1);
+
+    expect(markers[1].start).toBe(inlineCode!.end - 1);
+    expect(markers[1].end).toBe(inlineCode!.end);
+  });
+
+  test('should ignore incomplete inline code syntax', () => {
+    const markdown = 'Text `Hello';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getInlineCodeMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+
+  test('should skip multiple-backtick syntax for now', () => {
+    const markdown = 'Text ``Hello`` end';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getInlineCodeMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+
+  test('should not treat Markdown inside inline code as formatting', () => {
+    const markdown = 'Text `**Not Bold**` end';
+
+    const elements = parseLivePreview(markdown);
+
+    const boldElements = elements.filter(e => e.type === 'bold');
+
+    const markers = getInlineCodeMarkers(markdown, elements);
+
+    expect(boldElements).toHaveLength(0);
+    expect(markers).toHaveLength(2);
+
+    const inlineCode = elements.find(e => e.type === 'inlineCode');
+
+    expect(inlineCode).toBeDefined();
+
+    expect(markdown.slice(inlineCode!.start, inlineCode!.end)).toBe(
+      '`**Not Bold**`'
+    );
+  });
+});
+
+describe('Live Preview Heading Markers', () => {
+  test('should identify heading markers from H1 to H6', () => {
+    const markdown = [
+      '# Heading 1',
+      '## Heading 2',
+      '### Heading 3',
+      '#### Heading 4',
+      '##### Heading 5',
+      '###### Heading 6',
+    ].join('\n\n');
+
+    const elements = parseLivePreview(markdown);
+    const headings = elements.filter(e => e.type === 'heading');
+
+    const markers = getHeadingMarkers(markdown, elements);
+
+    expect(headings).toHaveLength(6);
+    expect(markers).toHaveLength(6);
+
+    for (let i = 0; i < 6; i++) {
+      const level = i + 1;
+      const heading = headings[i];
+      const marker = markers[i];
+
+      // Verify heading level from AST.
+      expect(heading.headingLevel).toBe(level);
+
+      // Verify the opening # characters.
+      expect(markdown.slice(marker.start, marker.end)).toBe('#'.repeat(level));
+
+      // Verify exact marker range.
+      expect(marker.start).toBe(heading.start);
+      expect(marker.end).toBe(heading.start + level);
+
+      // Verify the marker belongs to its heading.
+      expect(marker.elementStart).toBe(heading.start);
+      expect(marker.elementEnd).toBe(heading.end);
+    }
+  });
+
+  test('should ignore invalid ATX heading syntax', () => {
+    const markdown = ['#Heading without space', '####### Too many hashes'].join(
+      '\n\n'
+    );
+
+    const elements = parseLivePreview(markdown);
+    const markers = getHeadingMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+
+  test('should not recognize headings inside code blocks', () => {
+    const markdown = [
+      '```markdown',
+      '# Not Heading',
+      '## Also Not Heading',
+      '```',
+    ].join('\n');
+
+    const elements = parseLivePreview(markdown);
+    const markers = getHeadingMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+  });
+
+  test('should skip Setext headings for now', () => {
+    const markdown = [
+      'Heading One',
+      '===========',
+      '',
+      'Heading Two',
+      '-----------',
+    ].join('\n');
+
+    const elements = parseLivePreview(markdown);
+    const headings = elements.filter(e => e.type === 'heading');
+
+    const markers = getHeadingMarkers(markdown, elements);
+
+    // Remark recognizes Setext headings as headings.
+    expect(headings).toHaveLength(2);
+
+    // But our marker implementation currently handles
+    // only ATX headings beginning with #.
+    expect(markers).toHaveLength(0);
+  });
+});
+
+describe('Live Preview BoldItalic Markers', () => {
+  test('should identify opening and closing triple-star markers', () => {
+    const markdown = '***Hello World***';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getBoldItalicMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(2);
+
+    // Opening ***
+    expect(markers[0].start).toBe(0);
+    expect(markers[0].end).toBe(3);
+
+    // Closing ***
+    expect(markers[1].start).toBe(14);
+    expect(markers[1].end).toBe(17);
+
+    for (const marker of markers) {
+      expect(markdown.slice(marker.start, marker.end)).toBe('***');
+
+      expect(marker.elementStart).toBe(0);
+      expect(marker.elementEnd).toBe(17);
+    }
+  });
+
+  test('should handle multiple BoldItalic elements independently', () => {
+    const markdown = '***First*** and ***Second***';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getBoldItalicMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(4);
+
+    for (const marker of markers) {
+      expect(markdown.slice(marker.start, marker.end)).toBe('***');
+    }
+
+    // Opening and closing markers of First.
+    expect(markers[0].elementStart).toBe(markers[1].elementStart);
+
+    expect(markers[0].elementEnd).toBe(markers[1].elementEnd);
+
+    // Opening and closing markers of Second.
+    expect(markers[2].elementStart).toBe(markers[3].elementStart);
+
+    expect(markers[2].elementEnd).toBe(markers[3].elementEnd);
+
+    // The two BoldItalic elements are independent.
+    expect(markers[0].elementEnd).toBeLessThan(markers[2].elementStart);
+  });
+
+  test('should not confuse normal or nested formatting with BoldItalic', () => {
+    const samples = ['**Bold**', '*Italic*', '**Bold and *Italic* inside**'];
+
+    for (const markdown of samples) {
+      const elements = parseLivePreview(markdown);
+      const markers = getBoldItalicMarkers(markdown, elements);
+
+      expect(markers).toHaveLength(0);
+    }
+  });
+
+  test('should not recognize BoldItalic inside Inline Code', () => {
+    const markdown = '`***Not BoldItalic***`';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getBoldItalicMarkers(markdown, elements);
+
+    expect(markers).toHaveLength(0);
+
+    expect(elements.filter(e => e.type === 'inlineCode')).toHaveLength(1);
+  });
+
+  test('should ignore incomplete BoldItalic syntax', () => {
+    const markdown = '***Hello World';
+
+    const elements = parseLivePreview(markdown);
+    const markers = getBoldItalicMarkers(markdown, elements);
 
     expect(markers).toHaveLength(0);
   });

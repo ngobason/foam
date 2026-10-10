@@ -219,3 +219,177 @@ export function getItalicMarkers(
 
   return markers;
 }
+
+/**
+ * Find opening and closing markers for simple Inline Code.
+ *
+ * Example:
+ *   `Hello`
+ *   ^     ^
+ *
+ * Only single-backtick syntax is supported initially.
+ * Multiple-backtick delimiters are deferred to a later step.
+ */
+export function getInlineCodeMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'inlineCode') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+
+    // Only support simple `Code` syntax.
+    if (
+      raw.length <= 2 ||
+      !raw.startsWith('`') ||
+      !raw.endsWith('`') ||
+      raw.startsWith('``') ||
+      raw.endsWith('``') ||
+      markdown[element.start - 1] === '`' ||
+      markdown[element.end] === '`' ||
+      raw.includes('\n')
+    ) {
+      continue;
+    }
+
+    // Opening backtick.
+    markers.push({
+      start: element.start,
+      end: element.start + 1,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+
+    // Closing backtick.
+    markers.push({
+      start: element.end - 1,
+      end: element.end,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+  }
+
+  return markers;
+}
+
+/**
+ * Find opening # markers for ATX-style Markdown headings.
+ *
+ * Examples:
+ *   # Heading 1
+ *   ## Heading 2
+ *   ### Heading 3
+ *
+ * Only headings beginning directly with 1-6 # characters
+ * followed by a space or tab are supported initially.
+ */
+export function getHeadingMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'heading') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+
+    // Match ATX headings with 1-6 # characters.
+    const match = raw.match(/^(#{1,6})(?=[ \t])/);
+
+    if (!match) {
+      continue;
+    }
+
+    const headingLevel = match[1].length;
+
+    // Ensure the marker agrees with the AST heading level.
+    if (headingLevel !== element.headingLevel) {
+      continue;
+    }
+
+    // Opening heading marker: #, ##, ###, etc.
+    markers.push({
+      start: element.start,
+      end: element.start + headingLevel,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+  }
+
+  return markers;
+}
+
+/**
+ * Find markers for simple combined BoldItalic syntax.
+ *
+ * Example:
+ *   ***Hello World***
+ *   ^^^           ^^^
+ *
+ * Remark parses this syntax as:
+ *   - outer strong (bold)
+ *   - inner emphasis (italic)
+ *
+ * Other nested formatting patterns are deferred.
+ */
+export function getBoldItalicMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  const boldElements = elements.filter(element => element.type === 'bold');
+
+  const italicElements = elements.filter(element => element.type === 'italic');
+
+  for (const bold of boldElements) {
+    const raw = markdown.slice(bold.start, bold.end);
+
+    // Only handle simple ***text*** syntax.
+    if (
+      raw.length <= 6 ||
+      !raw.startsWith('***') ||
+      !raw.endsWith('***') ||
+      markdown[bold.start - 1] === '*' ||
+      markdown[bold.end] === '*'
+    ) {
+      continue;
+    }
+
+    // Confirm Remark found an italic node inside
+    // the outer bold node at the expected positions.
+    const innerItalic = italicElements.find(
+      italic => italic.start === bold.start + 2 && italic.end === bold.end - 2
+    );
+
+    if (!innerItalic) {
+      continue;
+    }
+
+    // Opening ***
+    markers.push({
+      start: bold.start,
+      end: bold.start + 3,
+      elementStart: bold.start,
+      elementEnd: bold.end,
+    });
+
+    // Closing ***
+    markers.push({
+      start: bold.end - 3,
+      end: bold.end,
+      elementStart: bold.start,
+      elementEnd: bold.end,
+    });
+  }
+
+  return markers;
+}
