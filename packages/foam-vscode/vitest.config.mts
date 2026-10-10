@@ -44,7 +44,10 @@ export default defineConfig({
       // `@foam/core/test` (which relative-imports ../src/...) resolves
       // to source — two instances of URI etc., breaking `instanceof`.
       // Order matters: longer prefix first.
-      '@foam/core/test': path.join(__dirname, '../foam-core/test/test-utils.ts'),
+      '@foam/core/test': path.join(
+        __dirname,
+        '../foam-core/test/test-utils.ts'
+      ),
       '@foam/core/scripting': path.join(
         __dirname,
         '../foam-core/src/scripting/index.ts'
@@ -71,7 +74,10 @@ export default defineConfig({
       './src/test/support/vitest-setup.ts',
       './src/test/support/vitest-setup-after-env.ts',
     ],
-    include: ['src/**/*.test.ts', ...unitReadySpecs],
+    include: [
+      'src/**/*.test.ts',
+      ...unitReadySpecs.map(spec => spec.replace(/\\/g, '/')),
+    ],
     exclude: ['src/test/web/**', 'node_modules/**', '.vscode-test/**'],
     testTimeout: 20000,
     clearMocks: true,
