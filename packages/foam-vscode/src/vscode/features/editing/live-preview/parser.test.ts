@@ -175,13 +175,28 @@ describe('Live Preview Italic Markers', () => {
     expect(markers).toHaveLength(0);
   });
 
-  test('should skip italic nested inside bold', () => {
+  test('should identify italic nested inside bold', () => {
     const markdown = '**Bold *Nested* text**';
 
     const elements = parseLivePreview(markdown);
     const markers = getItalicMarkers(markdown, elements);
 
-    expect(markers).toHaveLength(0);
+    // Remark must recognize the nested Italic element.
+    const italic = elements.find(e => e.type === 'italic');
+    expect(italic).toBeDefined();
+
+    // Expect opening and closing * markers.
+    expect(markers).toHaveLength(2);
+
+    expect(markdown.slice(markers[0].start, markers[0].end)).toBe('*');
+
+    expect(markdown.slice(markers[1].start, markers[1].end)).toBe('*');
+
+    // Both markers belong to the same Italic element.
+    for (const marker of markers) {
+      expect(marker.elementStart).toBe(italic!.start);
+      expect(marker.elementEnd).toBe(italic!.end);
+    }
   });
 });
 

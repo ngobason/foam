@@ -178,14 +178,6 @@ export function getItalicMarkers(
 
     const raw = markdown.slice(element.start, element.end);
 
-    // Skip Italic nested inside Bold.
-    const isNestedInsideBold = elements.some(
-      other =>
-        other.type === 'bold' &&
-        other.start <= element.start &&
-        other.end >= element.end
-    );
-
     // Only support simple *Italic* syntax.
     if (
       raw.length <= 2 ||
@@ -194,8 +186,7 @@ export function getItalicMarkers(
       raw.startsWith('**') ||
       raw.endsWith('**') ||
       markdown[element.start - 1] === '*' ||
-      markdown[element.end] === '*' ||
-      isNestedInsideBold
+      markdown[element.end] === '*'
     ) {
       continue;
     }
