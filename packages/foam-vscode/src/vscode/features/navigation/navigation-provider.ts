@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
-import { toVsCodeRange, toVsCodeUri, fromVsCodeUri } from '../../utils/vsc-utils';
+import {
+  toVsCodeRange,
+  toVsCodeUri,
+  fromVsCodeUri,
+} from '../../utils/vsc-utils';
 import { Foam } from '@foam/core';
 import { FoamWorkspace } from '@foam/core';
 import {
@@ -332,11 +336,43 @@ export class NavigationProvider
         return dl;
       });
 
+    // Make the visible label of direct external Markdown links clickable.
+    // Example: [Google](https://www.google.com) -> clickable "Google".
+    const directExternalLinks: vscode.DocumentLink[] = targets
+      .filter(({ link, target }) => {
+        if (link.type !== 'external' || target.isPlaceholder()) {
+          return false;
+        }
+
+        const raw = link.rawText;
+        const labelEnd = raw.indexOf('](');
+
+        return (
+          raw.startsWith('[') &&
+          raw.endsWith(')') &&
+          labelEnd > 1 &&
+          link.range.start.line === link.range.end.line
+        );
+      })
+      .map(({ link, target }) => {
+        const labelEnd = link.rawText.indexOf('](');
+
+        // Select only the text between [ and ].
+        const range = new vscode.Range(
+          link.range.start.line,
+          link.range.start.character + 1,
+          link.range.start.line,
+          link.range.start.character + labelEnd
+        );
+
+        return new vscode.DocumentLink(range, toVsCodeUri(target.asPlain()));
+      });
+
     // Wikilinks and reference-style links to attachments (PDFs, docs, etc.)
     // and images are surfaced as DocumentLinks that invoke the `vscode.open`
-    // command (the same mechanism used by the built-in Markdown extension) 
+    // command (the same mechanism used by the built-in Markdown extension)
     // resolves the editor correctly at every settings scope.
-    // Direct markdown links ([text](file.pdf)) are handled by the built-in Markdown 
+    // Direct markdown links ([text](file.pdf)) are handled by the built-in Markdown
     // extension
     // See: https://github.com/foambubble/foam/issues/1675
     const attachmentLinks: vscode.DocumentLink[] = targets
@@ -420,6 +456,7 @@ export class NavigationProvider
 
     return links
       .concat(resolvedReferenceLinks)
+      .concat(directExternalLinks)
       .concat(attachmentLinks)
       .concat(tags);
   }

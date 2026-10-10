@@ -6,6 +6,7 @@ import {
   getHeadingMarkers,
   getBoldItalicMarkers,
   getWikilinkMarkers,
+  getMarkdownLinkMarkers,
 } from './parser';
 
 describe('Live Preview Markdown Parser', () => {
@@ -500,4 +501,60 @@ test('should identify wikilink alias markers', () => {
 
   // The displayed text should be the alias.
   expect(markdown.slice(markers[0].end, markers[1].start)).toBe('Node.js');
+});
+
+test('should identify an external Markdown link', () => {
+  const markdown = '[Google](https://www.google.com)';
+
+  const elements = parseLivePreview(markdown);
+
+  expect(elements).toContainEqual({
+    type: 'markdownLink',
+    start: 0,
+    end: markdown.length,
+  });
+});
+
+test('should identify an internal Markdown link', () => {
+  const markdown = '[NodeJS](./NodeJS.md)';
+
+  const elements = parseLivePreview(markdown);
+
+  expect(elements).toContainEqual({
+    type: 'markdownLink',
+    start: 0,
+    end: markdown.length,
+  });
+});
+
+test('should identify external Markdown link markers', () => {
+  const markdown = '[Google](https://www.google.com)';
+  const elements = parseLivePreview(markdown);
+  const markers = getMarkdownLinkMarkers(markdown, elements);
+
+  expect(markers).toHaveLength(2);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '[',
+    '](https://www.google.com)',
+  ]);
+
+  expect(
+    markers.every(m => m.elementStart === 0 && m.elementEnd === markdown.length)
+  ).toBe(true);
+});
+
+test('should identify internal Markdown link markers', () => {
+  const markdown = '[NodeJS](./NodeJS.md)';
+  const elements = parseLivePreview(markdown);
+  const markers = getMarkdownLinkMarkers(markdown, elements);
+
+  expect(markers).toHaveLength(2);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '[',
+    '](./NodeJS.md)',
+  ]);
+
+  expect(markdown.slice(markers[0].end, markers[1].start)).toBe('NodeJS');
 });

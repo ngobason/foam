@@ -45,6 +45,44 @@ describe('Document navigation', () => {
       expect(links.length).toEqual(0);
     });
 
+    it('should create a document link on the label of a direct external Markdown link', async () => {
+      const { uri, content } = await createFile(
+        '[Google](https://www.google.com)'
+      );
+
+      const resource = parser.parse(uri, content);
+
+      // Temporary debug: inspect the Markdown links recognized by Foam.
+      console.log(
+        '[Markdown Link Debug]',
+        resource.links.map(link => ({
+          type: link.type,
+          rawText: link.rawText,
+          range: link.range,
+        }))
+      );
+
+      const ws = createTestWorkspace().set(resource);
+
+      const graph = FoamGraph.fromWorkspace(ws);
+      const tags = FoamTags.fromWorkspace(ws);
+
+      const doc = await vscode.workspace.openTextDocument(toVsCodeUri(uri));
+      const provider = new NavigationProvider(ws, graph, parser, tags);
+
+      const links = await provider.provideDocumentLinks(doc);
+
+      // The Foam provider should expose a clickable link on "Google".
+      expect(links).toHaveLength(1);
+
+      // "Google" occupies characters 1 through 6.
+      // The end position is exclusive.
+      expect(links[0].range).toEqual(new vscode.Range(0, 1, 0, 7));
+
+      // Clicking the label should navigate to the external URL.
+      expect(links[0].target?.toString()).toBe('https://www.google.com');
+    });
+
     it('should not return any link for documents without links', async () => {
       const { uri, content } = await createFile(
         'This is some content without links'

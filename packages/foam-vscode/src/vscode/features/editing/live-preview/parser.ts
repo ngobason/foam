@@ -11,7 +11,8 @@ export type LivePreviewElementType =
   | 'bold'
   | 'italic'
   | 'inlineCode'
-  | 'wikilink';
+  | 'wikilink'
+  | 'markdownLink';
 
 /**
  * Position of a Markdown element in the source text.
@@ -64,6 +65,10 @@ export function parseLivePreview(markdown: string): LivePreviewElement[] {
 
       case 'wikiLink':
         type = 'wikilink';
+        break;
+
+      case 'link':
+        type = 'markdownLink';
         break;
 
       default:
@@ -435,6 +440,52 @@ export function getWikilinkMarkers(
 
     markers.push({
       start: suffixStart,
+      end: element.end,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+  }
+
+  return markers;
+}
+
+export function getMarkdownLinkMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'markdownLink') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+
+    // Only handle complete inline Markdown links.
+    if (raw.length < 5 || !raw.startsWith('[') || !raw.endsWith(')')) {
+      continue;
+    }
+
+    // Find the boundary between link label and destination.
+    const separatorIndex = raw.lastIndexOf('](');
+
+    // Skip links with empty or invalid visible labels.
+    if (separatorIndex <= 1) {
+      continue;
+    }
+
+    // Hide the opening "[".
+    markers.push({
+      start: element.start,
+      end: element.start + 1,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+
+    // Hide "](destination)".
+    markers.push({
+      start: element.start + separatorIndex,
       end: element.end,
       elementStart: element.start,
       elementEnd: element.end,
