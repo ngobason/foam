@@ -7,7 +7,9 @@ import {
   getInlineCodeMarkers,
   getHeadingMarkers,
   getBoldItalicMarkers,
+  getWikilinkMarkers,
 } from './parser';
+
 import { createLivePreviewDecorations } from './decorations';
 
 /**
@@ -45,14 +47,17 @@ export default function activate(context: vscode.ExtensionContext): void {
     const inlineCodeMarkers = getInlineCodeMarkers(markdown, elements);
     const headingMarkers = getHeadingMarkers(markdown, elements);
     const boldItalicMarkers = getBoldItalicMarkers(markdown, elements);
+    const wikilinkMarkers = getWikilinkMarkers(markdown, elements);
 
     // Combine all supported markers.
+
     const markers = [
       ...boldMarkers,
       ...italicMarkers,
       ...inlineCodeMarkers,
       ...headingMarkers,
       ...boldItalicMarkers,
+      ...wikilinkMarkers,
     ];
 
     // Apply formatting and cursor-aware marker visibility.

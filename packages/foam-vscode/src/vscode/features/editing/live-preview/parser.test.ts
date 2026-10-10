@@ -5,6 +5,7 @@ import {
   getInlineCodeMarkers,
   getHeadingMarkers,
   getBoldItalicMarkers,
+  getWikilinkMarkers,
 } from './parser';
 
 describe('Live Preview Markdown Parser', () => {
@@ -442,4 +443,61 @@ describe('Live Preview BoldItalic Markers', () => {
 
     expect(markers).toHaveLength(0);
   });
+});
+
+test('should identify a basic wikilink', () => {
+  const markdown = '[[NodeJS]]';
+
+  const elements = parseLivePreview(markdown);
+
+  expect(elements).toContainEqual({
+    type: 'wikilink',
+    start: 0,
+    end: markdown.length,
+  });
+});
+
+test('should identify a wikilink with alias', () => {
+  const markdown = '[[NodeJS|Node.js]]';
+
+  const elements = parseLivePreview(markdown);
+
+  expect(elements).toContainEqual({
+    type: 'wikilink',
+    start: 0,
+    end: markdown.length,
+  });
+});
+
+test('should identify basic wikilink markers', () => {
+  const markdown = '[[NodeJS]]';
+  const elements = parseLivePreview(markdown);
+  const markers = getWikilinkMarkers(markdown, elements);
+
+  expect(markers).toHaveLength(2);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '[[',
+    ']]',
+  ]);
+
+  expect(
+    markers.every(m => m.elementStart === 0 && m.elementEnd === markdown.length)
+  ).toBe(true);
+});
+
+test('should identify wikilink alias markers', () => {
+  const markdown = '[[NodeJS|Node.js]]';
+  const elements = parseLivePreview(markdown);
+  const markers = getWikilinkMarkers(markdown, elements);
+
+  expect(markers).toHaveLength(2);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '[[NodeJS|',
+    ']]',
+  ]);
+
+  // The displayed text should be the alias.
+  expect(markdown.slice(markers[0].end, markers[1].start)).toBe('Node.js');
 });

@@ -10,7 +10,8 @@ export type LivePreviewElementType =
   | 'heading'
   | 'bold'
   | 'italic'
-  | 'inlineCode';
+  | 'inlineCode'
+  | 'wikilink';
 
 /**
  * Position of a Markdown element in the source text.
@@ -59,6 +60,10 @@ export function parseLivePreview(markdown: string): LivePreviewElement[] {
 
       case 'inlineCode':
         type = 'inlineCode';
+        break;
+
+      case 'wikiLink':
+        type = 'wikilink';
         break;
 
       default:
@@ -379,6 +384,60 @@ export function getBoldItalicMarkers(
       end: bold.end,
       elementStart: bold.start,
       elementEnd: bold.end,
+    });
+  }
+
+  return markers;
+}
+
+export function getWikilinkMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'wikilink') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+
+    // Only handle complete wikilinks.
+    if (raw.length <= 4 || !raw.startsWith('[[') || !raw.endsWith(']]')) {
+      continue;
+    }
+
+    // Find alias separator, if present.
+    const separatorIndex = raw.indexOf('|', 2);
+
+    // For a basic link, hide only [[.
+    // For an alias link, hide [[Target|.
+    const prefixEnd =
+      separatorIndex >= 0
+        ? element.start + separatorIndex + 1
+        : element.start + 2;
+
+    // The final ]] is always hidden.
+    const suffixStart = element.end - 2;
+
+    // Ensure that visible link text is not empty.
+    if (prefixEnd >= suffixStart) {
+      continue;
+    }
+
+    markers.push({
+      start: element.start,
+      end: prefixEnd,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+
+    markers.push({
+      start: suffixStart,
+      end: element.end,
+      elementStart: element.start,
+      elementEnd: element.end,
     });
   }
 
