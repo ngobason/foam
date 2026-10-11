@@ -9,6 +9,7 @@ import {
   getMarkdownLinkMarkers,
   getListItemMarkers,
   getBlockquoteMarkers,
+  getTaskListMarkers,
 } from './parser';
 
 describe('Live Preview Markdown Parser', () => {
@@ -647,4 +648,67 @@ test('should identify blockquote markers on empty quoted lines', () => {
     '>',
     '> ',
   ]);
+});
+
+test('should identify unchecked and checked task markers', () => {
+  const markdown = '- [ ] Pending Task\n- [x] Completed Task';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getTaskListMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '- [ ] ',
+    '- [x] ',
+  ]);
+});
+
+test('should distinguish task items from normal list items', () => {
+  const markdown = '- Normal Item\n- [ ] Task Item\n- Another Item';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getTaskListMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual(['- [ ] ']);
+});
+
+test('should identify nested task list markers', () => {
+  const markdown =
+    '- [ ] Parent\n' + '  - [x] Child\n' + '    - [ ] Grandchild';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getTaskListMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '- [ ] ',
+    '- [x] ',
+    '- [ ] ',
+  ]);
+});
+
+test('should identify uppercase and ordered task markers', () => {
+  const markdown = '+ [X] Completed\n\n3) [ ] Pending';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getTaskListMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '+ [X] ',
+    '3) [ ] ',
+  ]);
+});
+
+test('should not identify task markers inside fenced code blocks', () => {
+  const markdown = [
+    '```markdown',
+    '- [ ] This is code',
+    '- [x] This is also code',
+    '```',
+    '',
+    '- [ ] Real Task',
+  ].join('\n');
+
+  const elements = parseLivePreview(markdown);
+  const markers = getTaskListMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual(['- [ ] ']);
 });

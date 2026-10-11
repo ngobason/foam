@@ -60,6 +60,22 @@ export function createLivePreviewDecorations() {
       },
     });
 
+  const uncheckedTaskDecoration = vscode.window.createTextEditorDecorationType({
+    before: {
+      contentText: '☐',
+      color: new vscode.ThemeColor('editor.foreground'),
+      margin: '0 2px 0 0',
+    },
+  });
+
+  const checkedTaskDecoration = vscode.window.createTextEditorDecorationType({
+    before: {
+      contentText: '☑',
+      color: new vscode.ThemeColor('editor.foreground'),
+      margin: '0 2px 0 0',
+    },
+  });
+
   const types: LivePreviewElementType[] = [
     'heading',
     'bold',
@@ -117,7 +133,8 @@ export function createLivePreviewDecorations() {
     elements: LivePreviewElement[],
     markers: LivePreviewMarker[] = [],
     blockquoteMarkers: LivePreviewMarker[] = [],
-    listItemMarkers: LivePreviewMarker[] = []
+    listItemMarkers: LivePreviewMarker[] = [],
+    taskListMarkers: LivePreviewMarker[] = []
   ): void {
     // Apply formatting to Markdown elements.
     for (const type of types) {
@@ -143,6 +160,11 @@ export function createLivePreviewDecorations() {
 
     editor.setDecorations(blockquoteLineDecoration, blockquoteRanges);
 
+    // A task must show a checkbox instead of a normal bullet.
+    const taskMarkerStarts = new Set(
+      taskListMarkers.map(marker => marker.start)
+    );
+
     // Identify inactive unordered list markers.
     const inactiveUnorderedMarkers = listItemMarkers.filter(marker => {
       const range = new vscode.Range(
@@ -153,7 +175,9 @@ export function createLivePreviewDecorations() {
       const source = editor.document.getText(range);
 
       return (
-        /^[-+*][ \t]+$/.test(source) && !isListItemMarkerActive(editor, marker)
+        !taskMarkerStarts.has(marker.start) &&
+        /^[-+*][ \t]+$/.test(source) &&
+        !isListItemMarkerActive(editor, marker)
       );
     });
 
@@ -165,10 +189,37 @@ export function createLivePreviewDecorations() {
 
     editor.setDecorations(unorderedBulletDecoration, bulletRanges);
 
+    // Show checkboxes only when the task line is inactive.
+    const inactiveTaskMarkers = taskListMarkers.filter(
+      marker => !isListItemMarkerActive(editor, marker)
+    );
+
+    const uncheckedTaskRanges: vscode.Range[] = [];
+    const checkedTaskRanges: vscode.Range[] = [];
+
+    for (const marker of inactiveTaskMarkers) {
+      const start = editor.document.positionAt(marker.start);
+      const end = editor.document.positionAt(marker.end);
+      const source = editor.document.getText(new vscode.Range(start, end));
+
+      const decorationRange = new vscode.Range(start, start);
+
+      if (/\[[xX]\]/.test(source)) {
+        checkedTaskRanges.push(decorationRange);
+      } else {
+        uncheckedTaskRanges.push(decorationRange);
+      }
+    }
+
+    editor.setDecorations(uncheckedTaskDecoration, uncheckedTaskRanges);
+
+    editor.setDecorations(checkedTaskDecoration, checkedTaskRanges);
+
     // Hide markers when the cursor/selection is outside.
     const hiddenRanges = [
       ...markers.filter(marker => !isElementActive(editor, marker)),
       ...inactiveUnorderedMarkers,
+      ...inactiveTaskMarkers,
     ].map(marker => {
       return new vscode.Range(
         editor.document.positionAt(marker.start),
@@ -190,6 +241,8 @@ export function createLivePreviewDecorations() {
     editor.setDecorations(hiddenMarkerDecoration, []);
     editor.setDecorations(blockquoteLineDecoration, []);
     editor.setDecorations(unorderedBulletDecoration, []);
+    editor.setDecorations(uncheckedTaskDecoration, []);
+    editor.setDecorations(checkedTaskDecoration, []);
   }
 
   /**
@@ -203,6 +256,8 @@ export function createLivePreviewDecorations() {
     hiddenMarkerDecoration.dispose();
     blockquoteLineDecoration.dispose();
     unorderedBulletDecoration.dispose();
+    uncheckedTaskDecoration.dispose();
+    checkedTaskDecoration.dispose();
   }
 
   return {

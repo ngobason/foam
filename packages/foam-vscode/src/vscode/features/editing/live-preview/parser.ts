@@ -578,3 +578,44 @@ export function getBlockquoteMarkers(
 
   return markers;
 }
+
+export function getTaskListMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'listItem') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+    const firstLine = raw.split(/\r?\n/)[0];
+
+    // Match task list syntax:
+    // - [ ] Pending
+    // - [x] Completed
+    // - [X] Completed
+    // Including nested and ordered list items.
+    const match = /^([ \t]*)([-+*]|\d+[.)])([ \t]+)\[([ xX])\]([ \t]+)/.exec(
+      firstLine
+    );
+
+    if (!match) {
+      continue;
+    }
+
+    // Exclude indentation from the marker.
+    const markerStart = element.start + match[1].length;
+
+    markers.push({
+      start: markerStart,
+      end: element.start + match[0].length,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+  }
+
+  return markers;
+}

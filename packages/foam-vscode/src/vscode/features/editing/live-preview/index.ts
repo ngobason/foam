@@ -11,6 +11,7 @@ import {
   getMarkdownLinkMarkers,
   getBlockquoteMarkers,
   getListItemMarkers,
+  getTaskListMarkers,
 } from './parser';
 
 import { createLivePreviewDecorations } from './decorations';
@@ -54,6 +55,7 @@ export default function activate(context: vscode.ExtensionContext): void {
     const markdownLinkMarkers = getMarkdownLinkMarkers(markdown, elements);
     const blockquoteMarkers = getBlockquoteMarkers(markdown, elements);
     const listItemMarkers = getListItemMarkers(markdown, elements);
+    const taskListMarkers = getTaskListMarkers(markdown, elements);
     // Combine all supported markers.
 
     const markers = [
@@ -72,7 +74,8 @@ export default function activate(context: vscode.ExtensionContext): void {
       elements,
       markers,
       blockquoteMarkers,
-      listItemMarkers
+      listItemMarkers,
+      taskListMarkers
     );
   }
 
