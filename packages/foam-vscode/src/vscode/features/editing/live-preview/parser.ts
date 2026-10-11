@@ -6,13 +6,16 @@ import visit from 'unist-util-visit';
 /**
  * Markdown elements supported by Live Preview.
  */
+
 export type LivePreviewElementType =
   | 'heading'
   | 'bold'
   | 'italic'
   | 'inlineCode'
   | 'wikilink'
-  | 'markdownLink';
+  | 'markdownLink'
+  | 'listItem'
+  | 'blockquote';
 
 /**
  * Position of a Markdown element in the source text.
@@ -31,8 +34,12 @@ export interface LivePreviewElement {
  * Reuse the same Markdown parser libraries
  * and Wikilink syntax as Foam Core.
  */
+
 const markdownProcessor = unified()
-  .use(markdownParse, { gfm: true })
+  .use(markdownParse, {
+    gfm: true,
+    commonmark: true,
+  })
   .use(wikiLinkPlugin, { aliasDivider: '|' });
 
 /**
@@ -69,6 +76,14 @@ export function parseLivePreview(markdown: string): LivePreviewElement[] {
 
       case 'link':
         type = 'markdownLink';
+        break;
+
+      case 'listItem':
+        type = 'listItem';
+        break;
+
+      case 'blockquote':
+        type = 'blockquote';
         break;
 
       default:
@@ -490,6 +505,75 @@ export function getMarkdownLinkMarkers(
       elementStart: element.start,
       elementEnd: element.end,
     });
+  }
+
+  return markers;
+}
+
+export function getListItemMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'listItem') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+    const firstLine = raw.split(/\r?\n/)[0];
+
+    // Recognize unordered (-, +, *) and ordered (1., 2), ...)
+    // list markers followed by whitespace.
+    const match = /^([ \t]*)([-+*]|\d+[.)])([ \t]+)/.exec(firstLine);
+
+    if (!match) {
+      continue;
+    }
+
+    markers.push({
+      start: element.start + match[1].length,
+      end: element.start + match[0].length,
+      elementStart: element.start,
+      elementEnd: element.end,
+    });
+  }
+
+  return markers;
+}
+
+export function getBlockquoteMarkers(
+  markdown: string,
+  elements: LivePreviewElement[]
+): LivePreviewMarker[] {
+  const markers: LivePreviewMarker[] = [];
+
+  for (const element of elements) {
+    if (element.type !== 'blockquote') {
+      continue;
+    }
+
+    const raw = markdown.slice(element.start, element.end);
+
+    // Find blockquote markers at the beginning of each line.
+    const regex = /^[ \t]*(>[ \t]?)/gm;
+
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(raw)) !== null) {
+      // Skip leading indentation.
+      const indentationLength = match[0].length - match[1].length;
+
+      const markerStart = element.start + match.index + indentationLength;
+
+      markers.push({
+        start: markerStart,
+        end: markerStart + match[1].length,
+        elementStart: element.start,
+        elementEnd: element.end,
+      });
+    }
   }
 
   return markers;

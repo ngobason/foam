@@ -7,6 +7,8 @@ import {
   getBoldItalicMarkers,
   getWikilinkMarkers,
   getMarkdownLinkMarkers,
+  getListItemMarkers,
+  getBlockquoteMarkers,
 } from './parser';
 
 describe('Live Preview Markdown Parser', () => {
@@ -557,4 +559,92 @@ test('should identify internal Markdown link markers', () => {
   ]);
 
   expect(markdown.slice(markers[0].end, markers[1].start)).toBe('NodeJS');
+});
+
+test('should identify Markdown list items', () => {
+  const markdown = '- Item 1\n- Item 2';
+
+  const elements = parseLivePreview(markdown);
+
+  expect(elements.map(element => element.type)).toContain('listItem');
+});
+
+test('should identify Markdown blockquotes', () => {
+  const markdown = '> This is a blockquote';
+
+  const elements = parseLivePreview(markdown);
+
+  expect(elements.map(element => element.type)).toContain('blockquote');
+});
+
+test('should identify unordered and ordered list markers', () => {
+  const markdown = '- Item 1\n1. First';
+  const elements = parseLivePreview(markdown);
+  const markers = getListItemMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '- ',
+    '1. ',
+  ]);
+});
+
+test('should identify a single-line blockquote marker', () => {
+  const markdown = '> This is a quote';
+  const elements = parseLivePreview(markdown);
+  const markers = getBlockquoteMarkers(markdown, elements);
+
+  expect(markers).toHaveLength(1);
+  expect(markdown.slice(markers[0].start, markers[0].end)).toBe('> ');
+});
+
+test('should identify markers in nested lists', () => {
+  const markdown = '- Parent\n  - Child';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getListItemMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '- ',
+    '- ',
+  ]);
+});
+
+test('should identify markers in multiline blockquotes', () => {
+  const markdown = '> First line\n> Second line';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getBlockquoteMarkers(markdown, elements);
+
+  expect(markers).toHaveLength(2);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '> ',
+    '> ',
+  ]);
+});
+
+test('should identify different list marker styles', () => {
+  const markdown = '+ First\n* Second\n\n3) Third';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getListItemMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '+ ',
+    '* ',
+    '3) ',
+  ]);
+});
+
+test('should identify blockquote markers on empty quoted lines', () => {
+  const markdown = '> First line\n>\n> Last line';
+
+  const elements = parseLivePreview(markdown);
+  const markers = getBlockquoteMarkers(markdown, elements);
+
+  expect(markers.map(m => markdown.slice(m.start, m.end))).toEqual([
+    '> ',
+    '>',
+    '> ',
+  ]);
 });

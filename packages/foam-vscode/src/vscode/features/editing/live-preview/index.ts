@@ -9,6 +9,8 @@ import {
   getBoldItalicMarkers,
   getWikilinkMarkers,
   getMarkdownLinkMarkers,
+  getBlockquoteMarkers,
+  getListItemMarkers,
 } from './parser';
 
 import { createLivePreviewDecorations } from './decorations';
@@ -50,7 +52,8 @@ export default function activate(context: vscode.ExtensionContext): void {
     const boldItalicMarkers = getBoldItalicMarkers(markdown, elements);
     const wikilinkMarkers = getWikilinkMarkers(markdown, elements);
     const markdownLinkMarkers = getMarkdownLinkMarkers(markdown, elements);
-
+    const blockquoteMarkers = getBlockquoteMarkers(markdown, elements);
+    const listItemMarkers = getListItemMarkers(markdown, elements);
     // Combine all supported markers.
 
     const markers = [
@@ -64,7 +67,13 @@ export default function activate(context: vscode.ExtensionContext): void {
     ];
 
     // Apply formatting and cursor-aware marker visibility.
-    decorations.apply(editor, elements, markers);
+    decorations.apply(
+      editor,
+      elements,
+      markers,
+      blockquoteMarkers,
+      listItemMarkers
+    );
   }
 
   // Update the currently active editor.

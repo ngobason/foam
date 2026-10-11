@@ -13,7 +13,7 @@ import type {
 export function createLivePreviewDecorations() {
   // Decorations for Markdown content.
   const decorationTypes: Record<
-    LivePreviewElementType,
+    'heading' | 'bold' | 'italic' | 'inlineCode',
     vscode.TextEditorDecorationType
   > = {
     heading: vscode.window.createTextEditorDecorationType({
@@ -38,6 +38,27 @@ export function createLivePreviewDecorations() {
   const hiddenMarkerDecoration = vscode.window.createTextEditorDecorationType({
     opacity: '0',
   });
+
+  // Experimental whole-line styling for blockquotes.
+  const blockquoteLineDecoration = vscode.window.createTextEditorDecorationType(
+    {
+      isWholeLine: true,
+      backgroundColor: new vscode.ThemeColor('textBlockQuote.background'),
+      borderStyle: 'solid',
+      borderWidth: '0 0 0 3px',
+      borderColor: new vscode.ThemeColor('textBlockQuote.border'),
+    }
+  );
+
+  // Experimental bullet for unordered Markdown lists.
+  const unorderedBulletDecoration =
+    vscode.window.createTextEditorDecorationType({
+      before: {
+        contentText: '•',
+        color: new vscode.ThemeColor('editor.foreground'),
+        margin: '0 2px 0 0',
+      },
+    });
 
   const types: LivePreviewElementType[] = [
     'heading',
@@ -69,12 +90,34 @@ export function createLivePreviewDecorations() {
   }
 
   /**
+   * A list marker is active only when the cursor or selection
+   * touches the line containing that marker.
+   *
+   * This prevents editing a nested child from revealing
+   * the parent's list marker.
+   */
+  function isListItemMarkerActive(
+    editor: vscode.TextEditor,
+    marker: LivePreviewMarker
+  ): boolean {
+    const markerLine = editor.document.positionAt(marker.start).line;
+
+    return editor.selections.some(selection => {
+      return (
+        selection.start.line <= markerLine && selection.end.line >= markerLine
+      );
+    });
+  }
+
+  /**
    * Apply Markdown formatting and hide inactive markers.
    */
   function apply(
     editor: vscode.TextEditor,
     elements: LivePreviewElement[],
-    markers: LivePreviewMarker[] = []
+    markers: LivePreviewMarker[] = [],
+    blockquoteMarkers: LivePreviewMarker[] = [],
+    listItemMarkers: LivePreviewMarker[] = []
   ): void {
     // Apply formatting to Markdown elements.
     for (const type of types) {
@@ -90,15 +133,48 @@ export function createLivePreviewDecorations() {
       editor.setDecorations(decorationTypes[type], ranges);
     }
 
+    // Apply whole-line decorations to quoted lines.
+    const blockquoteRanges = blockquoteMarkers.map(marker => {
+      return new vscode.Range(
+        editor.document.positionAt(marker.start),
+        editor.document.positionAt(marker.end)
+      );
+    });
+
+    editor.setDecorations(blockquoteLineDecoration, blockquoteRanges);
+
+    // Identify inactive unordered list markers.
+    const inactiveUnorderedMarkers = listItemMarkers.filter(marker => {
+      const range = new vscode.Range(
+        editor.document.positionAt(marker.start),
+        editor.document.positionAt(marker.end)
+      );
+
+      const source = editor.document.getText(range);
+
+      return (
+        /^[-+*][ \t]+$/.test(source) && !isListItemMarkerActive(editor, marker)
+      );
+    });
+
+    // Insert visual bullet before each inactive marker.
+    const bulletRanges = inactiveUnorderedMarkers.map(marker => {
+      const position = editor.document.positionAt(marker.start);
+      return new vscode.Range(position, position);
+    });
+
+    editor.setDecorations(unorderedBulletDecoration, bulletRanges);
+
     // Hide markers when the cursor/selection is outside.
-    const hiddenRanges = markers
-      .filter(marker => !isElementActive(editor, marker))
-      .map(marker => {
-        return new vscode.Range(
-          editor.document.positionAt(marker.start),
-          editor.document.positionAt(marker.end)
-        );
-      });
+    const hiddenRanges = [
+      ...markers.filter(marker => !isElementActive(editor, marker)),
+      ...inactiveUnorderedMarkers,
+    ].map(marker => {
+      return new vscode.Range(
+        editor.document.positionAt(marker.start),
+        editor.document.positionAt(marker.end)
+      );
+    });
 
     editor.setDecorations(hiddenMarkerDecoration, hiddenRanges);
   }
@@ -112,6 +188,8 @@ export function createLivePreviewDecorations() {
     }
 
     editor.setDecorations(hiddenMarkerDecoration, []);
+    editor.setDecorations(blockquoteLineDecoration, []);
+    editor.setDecorations(unorderedBulletDecoration, []);
   }
 
   /**
@@ -123,6 +201,8 @@ export function createLivePreviewDecorations() {
     }
 
     hiddenMarkerDecoration.dispose();
+    blockquoteLineDecoration.dispose();
+    unorderedBulletDecoration.dispose();
   }
 
   return {
