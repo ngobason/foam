@@ -52,16 +52,6 @@ describe('Document navigation', () => {
 
       const resource = parser.parse(uri, content);
 
-      // Temporary debug: inspect the Markdown links recognized by Foam.
-      console.log(
-        '[Markdown Link Debug]',
-        resource.links.map(link => ({
-          type: link.type,
-          rawText: link.rawText,
-          range: link.range,
-        }))
-      );
-
       const ws = createTestWorkspace().set(resource);
 
       const graph = FoamGraph.fromWorkspace(ws);
@@ -186,7 +176,9 @@ describe('Document navigation', () => {
       const existingFile = await createFile('some content', ['.editorconfig']);
       const absolutePath = existingFile.uri.toFsPath();
       const noteA = await createFile(`link to [config](${absolutePath}).`);
-      // Note: .editorconfig is NOT added to workspace (no provider supports extensionless files)
+
+      // Note: .editorconfig is NOT added to workspace
+      // (no provider supports extensionless files)
       const ws = createTestWorkspace().set(
         parser.parse(noteA.uri, noteA.content)
       );

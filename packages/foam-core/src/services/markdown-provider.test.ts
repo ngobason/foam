@@ -1,4 +1,5 @@
 import { createMarkdownParser } from './markdown-parser';
+import { describe, it, expect, vi } from 'vitest';
 import {
   createMarkdownReferences,
   MarkdownResourceProvider,
@@ -255,6 +256,28 @@ describe('Link resolution', () => {
       const ws = createTestWorkspace();
       ws.set(noteA).set(noteB);
       expect(ws.resolveLink(noteA, noteA.links[0])).toEqual(noteB.uri);
+    });
+
+    it('should resolve Windows absolute paths with backslashes', () => {
+      const workspace = createTestWorkspace();
+
+      const noteA = createNoteFromMarkdown(
+        String.raw`Link to [target](C:\foam-test\docs\target.md)`,
+        '/C:/foam-test/docs/source.md'
+      );
+
+      const noteB = createNoteFromMarkdown(
+        'Target document',
+        '/C:/foam-test/docs/target.md'
+      );
+
+      workspace.set(noteA).set(noteB);
+
+      expect(noteA.links).toHaveLength(1);
+
+      const resolved = workspace.resolveLink(noteA, noteA.links[0]);
+
+      expect(resolved).toEqual(noteB.uri);
     });
 
     it('should support relative path 1', () => {
@@ -1106,8 +1129,8 @@ describe('readAsMarkdown with block fragments', () => {
 describe('createMarkdownReferences edge cases', () => {
   it('returns no definitions for a URI not in the workspace', () => {
     const ws = createTestWorkspace();
-    expect(
-      createMarkdownReferences(ws, URI.file('/missing.md'), true)
-    ).toEqual([]);
+    expect(createMarkdownReferences(ws, URI.file('/missing.md'), true)).toEqual(
+      []
+    );
   });
 });

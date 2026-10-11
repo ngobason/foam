@@ -133,10 +133,16 @@ export class MarkdownResourceProvider implements ResourceProvider {
           break;
         }
 
-        // Handle reference-style links first; strip trailing slash (directory links)
-        const targetPath = (
+        // Handle reference-style links first; strip trailing slash.
+        const rawTargetPath = (
           ResourceLink.isResolvedReference(link) ? link.definition.url : target
         ).replace(/\/$/, '');
+
+        // Normalize Windows absolute paths (e.g. C:\Users\...)
+        // to URI paths (e.g. /C:/Users/...) before resolving.
+        const targetPath = /^[a-zA-Z]:[\\/]/.test(rawTargetPath)
+          ? resource.uri.forPath(rawTargetPath).path
+          : rawTargetPath;
 
         let path: string;
 
