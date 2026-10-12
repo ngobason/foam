@@ -12,6 +12,17 @@ import { inlineLivePreview } from './inline-live-preview';
 import { inlineCodeLivePreview } from './inline-code-live-preview';
 import { listLivePreview } from './list-live-preview';
 import { taskLivePreview } from './task-live-preview';
+import { wikilinkLivePreview } from './wikilink-live-preview';
+import { markdownLinkLivePreview } from './markdown-link-live-preview';
+import { externalLinkNavigation } from './link-navigation';
+import { foamEditorSync } from './foam-editor-sync';
+import { internalLinkNavigation } from './internal-link-navigation';
+import { getActiveNoteUri } from './foam-editor-sync';
+import { noteSwitchAnnotation } from './foam-editor-sync';
+import { WELCOME_URI, readStoredNote, writeStoredNote } from './note-storage';
+import { EditorState, type Extension } from '@codemirror/state';
+import { registerNoteStateFactory } from './foam-editor-sync';
+import { wikilinkCaret } from './wikilink-caret';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -71,11 +82,8 @@ const initialMarkdown = [
   '[Google](https://www.google.com)',
 ].join('\n');
 
-// Key used to save the Markdown document in the browser.
-const STORAGE_KEY = 'foam-editor-poc-content';
-
-// Restore previously saved content.
-const savedMarkdown = localStorage.getItem(STORAGE_KEY);
+// Restore Welcome.md, including previously saved content.
+const savedMarkdown = readStoredNote(WELCOME_URI);
 
 // Heading hierarchy styling for Markdown Live Preview.
 const headingStyle = HighlightStyle.define([
@@ -126,28 +134,64 @@ if (!editorContainer) {
   throw new Error('Editor container not found');
 }
 
-// Create CodeMirror 6 editor.
+// Shared configuration for every note's EditorState.
+const editorExtensions: Extension[] = [
+  basicSetup,
+  markdown({ base: markdownLanguage }),
+  syntaxHighlighting(headingStyle),
+  EditorView.lineWrapping,
+
+  headingLivePreview,
+  inlineLivePreview,
+  inlineCodeLivePreview,
+  listLivePreview,
+  taskLivePreview,
+  wikilinkLivePreview,
+  wikilinkCaret,
+  markdownLinkLivePreview,
+
+  externalLinkNavigation,
+  foamEditorSync,
+  internalLinkNavigation,
+
+  EditorView.updateListener.of(update => {
+    if (!update.docChanged) {
+      return;
+    }
+
+    const isNoteSwitch = update.transactions.some(transaction =>
+      transaction.annotation(noteSwitchAnnotation)
+    );
+
+    if (isNoteSwitch) {
+      return;
+    }
+
+    const activeUri = getActiveNoteUri(update.view);
+
+    if (!activeUri) {
+      console.warn('[Foam Storage] No active note found');
+      return;
+    }
+
+    writeStoredNote(activeUri, update.state.doc.toString());
+  }),
+];
+
+// Every note uses the same extensions,
+// but receives its own independent EditorState.
+function createNoteState(markdownText: string): EditorState {
+  return EditorState.create({
+    doc: markdownText,
+    extensions: editorExtensions,
+  });
+}
+
+// Register the factory before creating the editor.
+registerNoteStateFactory(createNoteState);
+
+// Create the initial Welcome.md editor.
 new EditorView({
-  doc: savedMarkdown ?? initialMarkdown,
-
-  extensions: [
-    basicSetup,
-    markdown({ base: markdownLanguage }),
-    syntaxHighlighting(headingStyle),
-    EditorView.lineWrapping,
-    headingLivePreview,
-    inlineLivePreview,
-    inlineCodeLivePreview,
-    listLivePreview,
-    taskLivePreview,
-
-    // Automatically save whenever the document changes.
-    EditorView.updateListener.of(update => {
-      if (update.docChanged) {
-        localStorage.setItem(STORAGE_KEY, update.state.doc.toString());
-      }
-    }),
-  ],
-
+  state: createNoteState(savedMarkdown ?? initialMarkdown),
   parent: editorContainer,
 });

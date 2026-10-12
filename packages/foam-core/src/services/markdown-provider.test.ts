@@ -240,6 +240,50 @@ describe('Link resolution', () => {
       expect(ws.resolveLink(noteA, noteA.links[6])).toEqual(noteH.uri);
       expect(ws.resolveLink(noteA, noteA.links[7])).toEqual(noteI.uri);
     });
+
+    it('resolves CodeMirror PoC links using Foam Core', () => {
+      const workspace = createTestWorkspace();
+
+      const welcome = createNoteFromMarkdown(
+        [
+          '[[NodeJS]]',
+          '[[NodeJS|Node.js]]',
+          '[NodeJS](./NodeJS.md)',
+          '[[MissingNote]]',
+        ].join('\n'),
+        '/notes/Welcome.md'
+      );
+
+      const nodejs = createNoteFromMarkdown(
+        '# NodeJS\n\nThis is a NodeJS note.',
+        '/notes/NodeJS.md'
+      );
+
+      workspace.set(welcome).set(nodejs);
+
+      // Foam's parser should recognize all four links.
+      expect(welcome.links).toHaveLength(4);
+
+      // Plain Wikilink.
+      expect(workspace.resolveLink(welcome, welcome.links[0])).toEqual(
+        nodejs.uri
+      );
+
+      // Wikilink with display alias.
+      expect(workspace.resolveLink(welcome, welcome.links[1])).toEqual(
+        nodejs.uri
+      );
+
+      // Relative Markdown Link.
+      expect(workspace.resolveLink(welcome, welcome.links[2])).toEqual(
+        nodejs.uri
+      );
+
+      // Missing note must not resolve to NodeJS.
+      expect(workspace.resolveLink(welcome, welcome.links[3])).not.toEqual(
+        nodejs.uri
+      );
+    });
   });
 
   describe('Markdown direct links', () => {
