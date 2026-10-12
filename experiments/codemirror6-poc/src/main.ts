@@ -1,5 +1,5 @@
 import { EditorView, basicSetup } from 'codemirror';
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import {
   HighlightStyle,
   syntaxHighlighting,
@@ -9,6 +9,9 @@ import { tags } from '@lezer/highlight';
 import './style.css';
 import { headingLivePreview } from './heading-live-preview';
 import { inlineLivePreview } from './inline-live-preview';
+import { inlineCodeLivePreview } from './inline-code-live-preview';
+import { listLivePreview } from './list-live-preview';
+import { taskLivePreview } from './task-live-preview';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -129,11 +132,14 @@ new EditorView({
 
   extensions: [
     basicSetup,
-    markdown(),
+    markdown({ base: markdownLanguage }),
     syntaxHighlighting(headingStyle),
     EditorView.lineWrapping,
     headingLivePreview,
     inlineLivePreview,
+    inlineCodeLivePreview,
+    listLivePreview,
+    taskLivePreview,
 
     // Automatically save whenever the document changes.
     EditorView.updateListener.of(update => {

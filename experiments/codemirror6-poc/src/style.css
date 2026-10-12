@@ -84,3 +84,21 @@ body {
   background-color: #fafafa;
   border-right: 1px solid #eeeeee;
 }
+
+.cm-live-bullet {
+  display: inline-block;
+  color: var(--foam-bullet-color, #64748b);
+  font-weight: 700;
+  margin-right: 0.25em;
+  user-select: none;
+}
+
+/* Interactive Task List checkbox */
+.cm-task-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+  cursor: pointer;
+  accent-color: #64748b;
+}
