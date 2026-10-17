@@ -4,6 +4,7 @@ import { URI } from '@foam/core';
 
 import { FoamCoreAdapter } from './foam-core-adapter';
 import { WELCOME_URI, readStoredNote, writeStoredNote } from './note-storage';
+import { noteUriFacet } from './note-context';
 
 // Retained for compatibility with the existing storage listener.
 // setState() does not create a document-change transaction.
@@ -37,6 +38,11 @@ export function registerNoteStateFactory(factory: NoteStateFactory): void {
  */
 function syncWorkspace(view: EditorView): void {
   if (!adapter) {
+    return;
+  }
+  const documentUri = view.state.facet(noteUriFacet);
+
+  if (!documentUri || documentUri.toString() !== activeNoteUri.toString()) {
     return;
   }
 

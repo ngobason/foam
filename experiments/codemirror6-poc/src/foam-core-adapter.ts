@@ -76,6 +76,73 @@ export class FoamCoreAdapter {
     return new FoamCoreAdapter(workspace, parser, files);
   }
 
+  /**
+   * Create a Foam Workspace from Markdown files
+   * selected through BrowserNoteRepository.
+   *
+   * This first version is in-memory and read-only
+   * with respect to the physical files on disk.
+   */
+  static async createFromMarkdownFiles(
+    notes: readonly {
+      name: string;
+      content: string;
+    }[]
+  ): Promise<FoamCoreAdapter> {
+    const rootUri = URI.file('/real-notes');
+
+    const files = new Map<string, string>();
+    const uris: URI[] = [];
+
+    for (const note of notes) {
+      // Only accept Markdown filenames in the selected folder.
+      if (
+        !note.name.toLowerCase().endsWith('.md') ||
+        note.name.includes('/') ||
+        note.name.includes('\\')
+      ) {
+        throw new Error(`Invalid Markdown filename: ${note.name}`);
+      }
+
+      const uri = rootUri.joinPath(note.name);
+      const key = uri.toString();
+
+      if (files.has(key)) {
+        throw new Error(`Duplicate Markdown file: ${note.name}`);
+      }
+
+      files.set(key, note.content);
+      uris.push(uri);
+    }
+
+    // In-memory data source built from real Markdown files.
+    // It does not write back to disk.
+    const dataStore = new GenericDataStore(
+      async () => uris,
+      async uri => {
+        const content = files.get(uri.toString());
+
+        if (content === undefined) {
+          throw new Error(`Markdown file not found: ${uri.toString()}`);
+        }
+
+        return content;
+      }
+    );
+
+    const parser = createMarkdownParser([]);
+
+    const provider = new MarkdownResourceProvider(dataStore, parser);
+
+    const workspace = await FoamWorkspace.fromProviders(
+      [rootUri],
+      [provider],
+      dataStore
+    );
+
+    return new FoamCoreAdapter(workspace, parser, files);
+  }
+
   readNote(uri: URI): string | null {
     return this.files.get(uri.toString()) ?? null;
   }
