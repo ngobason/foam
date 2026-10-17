@@ -23,6 +23,11 @@ import { WELCOME_URI, readStoredNote, writeStoredNote } from './note-storage';
 import { EditorState, type Extension } from '@codemirror/state';
 import { registerNoteStateFactory } from './foam-editor-sync';
 import { wikilinkCaret } from './wikilink-caret';
+import { blockquoteLivePreview } from './blockquote-live-preview';
+import { imageLivePreview } from './image-live-preview';
+import { URI } from '@foam/core';
+import { resolveLocalImageUrl } from './asset-resolver';
+import { noteUriFacet } from './note-context';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -81,6 +86,33 @@ const initialMarkdown = [
   '[[NodeJS]]',
   '[Google](https://www.google.com)',
 ].join('\n');
+
+const assetTests = [
+  {
+    source: URI.file('/notes/Welcome.md'),
+    path: './images/demo.png',
+  },
+  {
+    source: URI.file('/notes/sub/Topic.md'),
+    path: '../images/demo.png',
+  },
+  {
+    source: URI.file('/notes/Welcome.md'),
+    path: './images/not-found.png',
+  },
+  {
+    source: URI.file('/notes/Welcome.md'),
+    path: '../../secret.png',
+  },
+];
+
+console.table(
+  assetTests.map(test => ({
+    source: test.source.toString(),
+    path: test.path,
+    result: resolveLocalImageUrl(test.source, test.path),
+  }))
+);
 
 // Restore Welcome.md, including previously saved content.
 const savedMarkdown = readStoredNote(WELCOME_URI);
@@ -146,9 +178,11 @@ const editorExtensions: Extension[] = [
   inlineCodeLivePreview,
   listLivePreview,
   taskLivePreview,
+  blockquoteLivePreview,
   wikilinkLivePreview,
   wikilinkCaret,
   markdownLinkLivePreview,
+  imageLivePreview,
 
   externalLinkNavigation,
   foamEditorSync,
@@ -178,20 +212,22 @@ const editorExtensions: Extension[] = [
   }),
 ];
 
-// Every note uses the same extensions,
-// but receives its own independent EditorState.
-function createNoteState(markdownText: string): EditorState {
-  return EditorState.create({
+function createNoteState(markdownText: string, noteUri: URI): EditorState {
+  const state = EditorState.create({
     doc: markdownText,
-    extensions: editorExtensions,
+    extensions: [...editorExtensions, noteUriFacet.of(noteUri)],
   });
+
+  // Temporary integration check.
+  console.log('[Note State URI]', state.facet(noteUriFacet)?.toString());
+
+  return state;
 }
 
 // Register the factory before creating the editor.
 registerNoteStateFactory(createNoteState);
 
-// Create the initial Welcome.md editor.
 new EditorView({
-  state: createNoteState(savedMarkdown ?? initialMarkdown),
+  state: createNoteState(savedMarkdown ?? initialMarkdown, WELCOME_URI),
   parent: editorContainer,
 });

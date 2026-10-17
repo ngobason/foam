@@ -20,7 +20,7 @@ let lastLinksSnapshot = '';
 // Each note keeps its own document, selection and Undo/Redo history.
 const noteStates = new Map<string, EditorState>();
 
-type NoteStateFactory = (markdown: string) => EditorState;
+type NoteStateFactory = (markdown: string, uri: URI) => EditorState;
 
 let noteStateFactory: NoteStateFactory | null = null;
 
@@ -145,7 +145,8 @@ export function openFoamNote(view: EditorView, targetUri: URI): boolean {
     return false;
   }
 
-  const targetState = cachedState ?? noteStateFactory(targetMarkdown ?? '');
+  const targetState =
+    cachedState ?? noteStateFactory(targetMarkdown ?? '', targetUri);
 
   const previousUri = activeNoteUri;
   const previousState = view.state;

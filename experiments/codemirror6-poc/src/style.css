@@ -102,3 +102,329 @@ body {
   cursor: pointer;
   accent-color: #64748b;
 }
+
+/* Blockquote Live Preview */
+
+/* Blockquote Live Preview */
+
+/* Nested Blockquote Live Preview */
+
+.cm-editor .cm-line.cm-live-blockquote {
+  --cm-quote-prefix-width: 2ch;
+  --cm-quote-bars-width: 2ch;
+
+  background-color: rgba(120, 150, 180, 0.07);
+
+  /* Draw a vertical bar for each nesting level. */
+  background-image: repeating-linear-gradient(
+    to right,
+    #8ca4bf 0px,
+    #8ca4bf 3px,
+    transparent 3px,
+    transparent 2ch
+  );
+
+  background-size: var(--cm-quote-bars-width) 100%;
+  background-repeat: no-repeat;
+  background-position: left top;
+
+  /* Preserve the previous indentation behavior. */
+  padding-left: calc(6px + var(--cm-quote-prefix-width));
+  text-indent: calc(0px - var(--cm-quote-prefix-width));
+}
+
+/* Hide quote syntax while preserving its layout width. */
+
+.cm-editor .cm-live-quote-syntax-hidden {
+  visibility: hidden;
+}
+
+/* Hide quote syntax without removing its layout space. */
+
+.cm-editor .cm-live-quote-syntax-hidden {
+  visibility: hidden;
+}
+
+/* Hide Blockquote syntax without changing text layout. */
+
+.cm-editor .cm-live-quote-syntax-hidden {
+  visibility: hidden;
+}
+
+/* Image Live Preview */
+
+.cm-editor .cm-live-image {
+  display: inline-block;
+  vertical-align: top;
+  max-width: 100%;
+  margin: 6px 0;
+}
+
+.cm-editor .cm-live-image img {
+  display: block;
+  max-width: min(460px, 75vw);
+  max-height: 260px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.cm-editor .cm-live-image-error {
+  font-size: 0.85em;
+  color: #b45309;
+}
+
+/* Image preview interaction */
+
+.cm-editor .cm-live-image {
+  position: relative;
+}
+
+.cm-editor .cm-live-image img {
+  cursor: zoom-in;
+}
+
+/* Compact image toolbar - Obsidian-like */
+
+.cm-editor .cm-live-image-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+
+  gap: 2px;
+  padding: 3px;
+
+  width: max-content;
+  max-width: calc(100% - 8px);
+  box-sizing: border-box;
+
+  background: rgba(30, 30, 30, 0.88);
+  border-radius: 7px;
+
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 2;
+}
+
+.cm-editor .cm-live-image:hover .cm-live-image-toolbar,
+.cm-editor .cm-live-image:focus-within .cm-live-image-toolbar {
+  opacity: 1;
+}
+
+.cm-editor .cm-live-image-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+
+  background: transparent;
+  color: #ffffff;
+
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cm-editor .cm-live-image-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.cm-editor .cm-live-image-toolbar button svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+/* Large image preview */
+
+.cm-image-lightbox {
+  position: fixed;
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: 95vw;
+  max-height: 95vh;
+  overflow: visible;
+}
+
+.cm-image-lightbox::backdrop {
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.cm-image-lightbox img {
+  display: block;
+  max-width: 90vw;
+  max-height: 85vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.cm-image-lightbox-close {
+  position: absolute;
+  top: -15px;
+  right: -15px;
+
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+
+  background: #333;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+/* Standalone Markdown image rendered as a block. */
+
+.cm-editor .cm-live-image.cm-live-image-block {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+
+  /* Block widgets should not have vertical margins. */
+  margin: 0;
+
+  /* Use internal spacing instead. */
+  padding: 6px 0;
+  box-sizing: border-box;
+}
+
+/* Image inline alignment and editor cursor behavior */
+
+.cm-editor .cm-live-image {
+  display: inline-block;
+  vertical-align: baseline;
+  max-width: 100%;
+  margin: 0;
+}
+
+/* Adjust inline images to align better with surrounding text. */
+
+.cm-editor .cm-live-image:not(.cm-live-image-block) {
+  vertical-align: -6px;
+}
+
+/* Missing local image placeholder */
+
+.cm-editor .cm-live-image-missing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+
+  padding: 9px 12px;
+  box-sizing: border-box;
+
+  background: rgba(128, 128, 128, 0.1);
+  color: #888;
+  border-radius: 8px;
+
+  font-size: 0.85em;
+  vertical-align: middle;
+  max-width: 100%;
+}
+
+.cm-editor .cm-live-image-missing-block {
+  width: 100%;
+}
+
+.cm-editor .cm-live-image-missing-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-editor .cm-live-image-missing-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+
+  padding: 3px 6px;
+  background: rgba(128, 128, 128, 0.15);
+  color: inherit;
+  cursor: pointer;
+
+  font-size: 12px;
+  font-family: monospace;
+
+  opacity: 0;
+}
+
+.cm-editor .cm-live-image-missing:hover .cm-live-image-missing-edit,
+.cm-editor .cm-live-image-missing:focus-within .cm-live-image-missing-edit {
+  opacity: 1;
+}
+
+/* Remote image loading error - compact Obsidian-like fallback */
+
+.cm-editor .cm-live-image.cm-live-image-error {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+.cm-editor .cm-live-image-error-fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  font-size: 0.88em;
+  line-height: 1.4;
+  color: #888;
+}
+
+.cm-editor .cm-live-image-error-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.cm-editor .cm-live-image-error-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-editor .cm-live-image-error-edit {
+  flex-shrink: 0;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.15);
+  color: inherit;
+  font-size: 12px;
+  font-family: monospace;
+  cursor: pointer;
+
+  opacity: 0;
+}
+
+.cm-editor .cm-live-image-error:hover .cm-live-image-error-edit,
+.cm-editor .cm-live-image-error:focus-within .cm-live-image-error-edit {
+  opacity: 1;
+}
