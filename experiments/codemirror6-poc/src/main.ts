@@ -25,7 +25,7 @@ import { registerNoteStateFactory } from './foam-editor-sync';
 import { wikilinkCaret } from './wikilink-caret';
 import { blockquoteLivePreview } from './blockquote-live-preview';
 import { imageLivePreview } from './image-live-preview';
-import { URI } from '@foam/core';
+import { URI, FoamGraph } from '@foam/core';
 import { resolveLocalImageUrl } from './asset-resolver';
 import { noteUriFacet } from './note-context';
 import { readWelcomeFromDisk } from './file-system-smoke';
@@ -326,6 +326,15 @@ let savingRealFile = false;
 let switchingWorkspace = false;
 let workspaceDiscardApproved = false;
 
+type ActiveRealWorkspace = {
+  repository: BrowserNoteRepository;
+  adapter: FoamCoreAdapter;
+  graph: FoamGraph;
+};
+
+let activeRealWorkspace: ActiveRealWorkspace | null = null;
+let realCoreSyncNeedsRetry = false;
+
 function hasUnsavedRealChanges(): boolean {
   if (!realFileSession?.editing) {
     return false;
@@ -349,10 +358,18 @@ async function saveActiveRealFile(): Promise<boolean> {
     return false;
   }
 
-  const markdownToSave = mainEditor.state.doc.toString();
+  const workspace = activeRealWorkspace;
 
-  // Nothing to save is considered a successful state.
-  if (markdownToSave === session.originalContent) {
+  // Never synchronize a note with the wrong workspace.
+  if (!workspace || workspace.repository !== session.repository) {
+    window.alert('Active Foam Workspace does not match this file.');
+    return false;
+  }
+
+  const markdownToSave = mainEditor.state.doc.toString();
+  const needsDiskWrite = markdownToSave !== session.originalContent;
+
+  if (!needsDiskWrite && !realCoreSyncNeedsRetry) {
     console.log('[MVP Real File Save] No changes');
     return true;
   }
@@ -361,22 +378,64 @@ async function saveActiveRealFile(): Promise<boolean> {
   saveRealFileButton.disabled = true;
 
   try {
-    const granted = await session.repository.requestWriteAccess();
+    // Step 1: Write to disk only when the document changed.
+    if (needsDiskWrite) {
+      const granted = await session.repository.requestWriteAccess();
 
-    if (!granted) {
-      window.alert('Write permission was not granted. File was not saved.');
+      if (!granted) {
+        window.alert('Write permission was not granted. File was not saved.');
+        return false;
+      }
+
+      await session.repository.saveMarkdownNote(
+        session.name,
+        markdownToSave,
+        session.originalContent
+      );
+
+      // Disk write has succeeded.
+      // Update the disk baseline immediately.
+      session.originalContent = markdownToSave;
+    }
+
+    // Step 2: Synchronize the persisted Markdown with Foam Core.
+    try {
+      const updatedResource = workspace.adapter.updateNote(
+        session.uri,
+        markdownToSave
+      );
+
+      // FoamGraph monitors workspace.set() automatically.
+      realCoreSyncNeedsRetry = false;
+
+      console.log('[MVP Real Foam Sync]', {
+        file: session.name,
+        links: updatedResource.links.map(link => link.rawText),
+        graphLinkCount: workspace.graph.getLinks(session.uri).length,
+      });
+    } catch (syncError) {
+      realCoreSyncNeedsRetry = true;
+
+      console.error('[MVP Real Foam Sync] Failed:', syncError);
+
+      const title = document.querySelector<HTMLElement>('.panel-title');
+
+      if (title && realFileSession === session) {
+        title.textContent = hasUnsavedRealChanges()
+          ? `${session.name} * (Not Saved; Core Sync Error)`
+          : `${session.name} (Disk Saved; Core Sync Error)`;
+      }
+
+      window.alert(
+        'The Markdown file was saved to disk, but Foam Core ' +
+          'synchronization failed. Your saved file is preserved. ' +
+          'Please check the Console. You can retry with Save.'
+      );
+
       return false;
     }
 
-    await session.repository.saveMarkdownNote(
-      session.name,
-      markdownToSave,
-      session.originalContent
-    );
-
-    // Update baseline only after successful disk write.
-    session.originalContent = markdownToSave;
-
+    // Step 3: Report the final editor state.
     const stillDirty = hasUnsavedRealChanges();
 
     const title = document.querySelector<HTMLElement>('.panel-title');
@@ -390,6 +449,8 @@ async function saveActiveRealFile(): Promise<boolean> {
     console.log('[MVP Real File Saved]', {
       file: session.name,
       characters: markdownToSave.length,
+      diskWrittenNow: needsDiskWrite,
+      coreSynced: true,
       stillDirty,
     });
 
@@ -841,7 +902,7 @@ listNotesButton.addEventListener('click', async () => {
       return;
     }
 
-    const notes = await repository.listMarkdownNotes();
+    let notes = await repository.listMarkdownNotes();
 
     // Ensure no other file operation is in progress.
     if (savingRealFile || openingExplorerFile) {
@@ -871,6 +932,33 @@ listNotesButton.addEventListener('click', async () => {
       return;
     }
 
+    // Reload files after a possible Save / Discard decision.
+    // This also handles selecting the same folder again.
+    notes = await repository.listMarkdownNotes();
+
+    // Prepare the new Foam Core adapter before replacing
+    // the currently active workspace.
+    const nextRealFoamAdapter = await FoamCoreAdapter.createFromMarkdownFiles(
+      notes
+    );
+
+    // Create a Graph from the prepared Foam Workspace.
+    // Graph will monitor Workspace events.
+    const nextRealFoamGraph = FoamGraph.fromWorkspace(
+      nextRealFoamAdapter.workspace,
+      true
+    );
+
+    console.log('[MVP Real Graph Prepared]', {
+      folder: repository.folderName,
+      graphReady: true,
+    });
+
+    console.log('[MVP Real Workspace Prepared]', {
+      folder: repository.folderName,
+      noteCount: notes.length,
+    });
+
     // Restore Sample before rendering the new workspace.
     if (realFileSession) {
       workspaceDiscardApproved = decision === 'discard';
@@ -891,6 +979,47 @@ listNotesButton.addEventListener('click', async () => {
     // Only now display the new folder.
     renderExplorerFileList(repository, notes);
 
+    // Remember the previously active workspace.
+    const previousRealWorkspace = activeRealWorkspace;
+
+    // Activate the newly prepared workspace.
+    activeRealWorkspace = {
+      repository,
+      adapter: nextRealFoamAdapter,
+      graph: nextRealFoamGraph,
+    };
+    realCoreSyncNeedsRetry = false;
+
+    // Dispose the previous workspace only after the new
+    // workspace has been activated successfully.
+    if (previousRealWorkspace) {
+      previousRealWorkspace.graph.dispose();
+      previousRealWorkspace.adapter.workspace.dispose();
+
+      console.log('[MVP Previous Real Workspace Disposed]', {
+        folder: previousRealWorkspace.repository.folderName,
+      });
+    }
+
+    // Inspect the first Markdown note, if one exists.
+    const firstNote = notes[0];
+
+    if (firstNote) {
+      const firstNoteUri = URI.file('/real-notes').joinPath(firstNote.name);
+
+      console.log('[MVP Real Graph Check]', {
+        file: firstNote.name,
+        links: nextRealFoamGraph.getLinks(firstNoteUri),
+        backlinks: nextRealFoamGraph.getBacklinks(firstNoteUri),
+      });
+    }
+
+    console.log('[MVP Active Real Workspace]', {
+      folder: activeRealWorkspace.repository.folderName,
+      noteCount: notes.length,
+      adapterReady: true,
+    });
+
     console.log('[MVP Note List]', {
       folder: repository.folderName,
       count: notes.length,
@@ -905,8 +1034,8 @@ listNotesButton.addEventListener('click', async () => {
 
     console.log('[MVP Note Contents]', notes);
 
-    // Build an isolated Foam Workspace from disk notes.
-    const realWorkspace = await FoamCoreAdapter.createFromMarkdownFiles(notes);
+    // Reuse the active adapter created before switching.
+    const realWorkspace = nextRealFoamAdapter;
 
     const realWelcomeUri = URI.file('/real-notes/Welcome.md');
 
