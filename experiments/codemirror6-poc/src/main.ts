@@ -49,11 +49,19 @@ app.innerHTML = `
     </header>
 
     <main class="main-content">
-      <section class="editor-panel">
-        <div class="panel-title">Welcome.md</div>
-        <div id="editor"></div>
-      </section>
-    </main>
+  <aside class="file-explorer">
+    <div class="explorer-title">EXPLORER</div>
+
+    <div id="mvp-file-list" class="file-list">
+      Chưa mở thư mục
+    </div>
+  </aside>
+
+  <section class="editor-panel">
+    <div class="panel-title">Welcome.md</div>
+    <div id="editor"></div>
+  </section>
+</main>
   </div>
 `;
 
@@ -315,6 +323,8 @@ type RealFileSession = {
 
 let realFileSession: RealFileSession | null = null;
 let savingRealFile = false;
+let switchingWorkspace = false;
+let workspaceDiscardApproved = false;
 
 function hasUnsavedRealChanges(): boolean {
   if (!realFileSession?.editing) {
@@ -332,45 +342,41 @@ saveRealFileButton.style.display = 'none';
 
 document.querySelector('.topbar')?.appendChild(saveRealFileButton);
 
-saveRealFileButton.addEventListener('click', async () => {
+async function saveActiveRealFile(): Promise<boolean> {
   const session = realFileSession;
 
   if (!session || !session.editing || savingRealFile) {
-    return;
+    return false;
   }
 
-  // Capture exactly the content being saved.
   const markdownToSave = mainEditor.state.doc.toString();
 
+  // Nothing to save is considered a successful state.
   if (markdownToSave === session.originalContent) {
     console.log('[MVP Real File Save] No changes');
-    return;
+    return true;
   }
 
   savingRealFile = true;
   saveRealFileButton.disabled = true;
 
   try {
-    // Request permission from the user's Save click.
     const granted = await session.repository.requestWriteAccess();
 
     if (!granted) {
       window.alert('Write permission was not granted. File was not saved.');
-      return;
+      return false;
     }
 
-    // Save only if the file on disk still matches
-    // the original content we loaded.
     await session.repository.saveMarkdownNote(
       session.name,
       markdownToSave,
       session.originalContent
     );
 
-    // Update the baseline only after a successful save.
+    // Update baseline only after successful disk write.
     session.originalContent = markdownToSave;
 
-    // Editing may have continued while the save was running.
     const stillDirty = hasUnsavedRealChanges();
 
     const title = document.querySelector<HTMLElement>('.panel-title');
@@ -386,17 +392,128 @@ saveRealFileButton.addEventListener('click', async () => {
       characters: markdownToSave.length,
       stillDirty,
     });
+
+    return !stillDirty;
   } catch (error) {
     console.error('[MVP Real File Save] Failed:', error);
 
     window.alert(
       error instanceof Error ? error.message : 'Failed to save Markdown file.'
     );
+
+    return false;
   } finally {
     savingRealFile = false;
     saveRealFileButton.disabled = false;
   }
+}
+
+// Save button continues to use the same logic.
+saveRealFileButton.addEventListener('click', () => {
+  void saveActiveRealFile();
 });
+
+type WorkspaceSwitchDecision = 'save' | 'discard' | 'cancel';
+
+function askWorkspaceSwitchDecision(): Promise<WorkspaceSwitchDecision> {
+  return new Promise(resolve => {
+    const dialog = document.createElement('dialog');
+
+    dialog.style.cssText = `
+      width: min(440px, 90vw);
+      padding: 24px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+    `;
+
+    const heading = document.createElement('h3');
+    heading.textContent = 'Unsaved Changes';
+
+    const message = document.createElement('p');
+    message.textContent =
+      'The current Markdown note has unsaved changes. ' +
+      'What would you like to do before switching workspace?';
+
+    const actions = document.createElement('div');
+
+    actions.style.cssText = `
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    `;
+
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.textContent = 'Save';
+
+    const discardButton = document.createElement('button');
+    discardButton.type = 'button';
+    discardButton.textContent = 'Discard';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = 'Cancel';
+
+    let finished = false;
+
+    function finish(decision: WorkspaceSwitchDecision): void {
+      if (finished) return;
+
+      finished = true;
+      dialog.close();
+      dialog.remove();
+
+      resolve(decision);
+    }
+
+    saveButton.addEventListener('click', async () => {
+      saveButton.disabled = true;
+      discardButton.disabled = true;
+      cancelButton.disabled = true;
+      saveButton.textContent = 'Saving...';
+
+      // Call directly from the Save click so the browser
+      // can request write permission.
+      const saved = await saveActiveRealFile();
+
+      if (saved) {
+        finish('save');
+        return;
+      }
+
+      // Failed save: keep the dialog and editor contents.
+      saveButton.disabled = false;
+      discardButton.disabled = false;
+      cancelButton.disabled = false;
+      saveButton.textContent = 'Save';
+    });
+
+    discardButton.addEventListener('click', () => {
+      finish('discard');
+    });
+
+    cancelButton.addEventListener('click', () => {
+      finish('cancel');
+    });
+
+    dialog.addEventListener('cancel', event => {
+      event.preventDefault();
+
+      // Do not dismiss the dialog during a write operation.
+      if (!saveButton.disabled) {
+        finish('cancel');
+      }
+    });
+
+    actions.append(saveButton, discardButton, cancelButton);
+
+    dialog.replaceChildren(heading, message, actions);
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  });
+}
 
 const editRealFileButton = document.createElement('button');
 
@@ -462,6 +579,7 @@ returnButton.addEventListener('click', () => {
 
   if (
     hasUnsavedRealChanges() &&
+    !workspaceDiscardApproved &&
     !window.confirm('File has unsaved changes. Return without saving?')
   ) {
     return;
@@ -470,6 +588,7 @@ returnButton.addEventListener('click', () => {
   mainEditor.setState(savedSampleState);
   savedSampleState = null;
   realFileSession = null;
+  updateExplorerActiveFile();
   editRealFileButton.style.display = 'none';
   saveRealFileButton.style.display = 'none';
 
@@ -510,6 +629,183 @@ fileTestButton.addEventListener('click', async () => {
   }
 });
 
+let openingExplorerFile = false;
+
+let explorerRepository: BrowserNoteRepository | null = null;
+
+function updateExplorerActiveFile(): void {
+  const activeName =
+    realFileSession && explorerRepository === realFileSession.repository
+      ? realFileSession.name
+      : null;
+
+  const fileButtons = document.querySelectorAll<HTMLButtonElement>(
+    '#mvp-file-list .explorer-file'
+  );
+
+  for (const button of fileButtons) {
+    const isActive =
+      activeName !== null && button.dataset.noteName === activeName;
+
+    button.classList.toggle('is-active', isActive);
+
+    if (isActive) {
+      button.setAttribute('aria-current', 'page');
+    } else {
+      button.removeAttribute('aria-current');
+    }
+  }
+}
+
+function renderExplorerFileList(
+  repository: BrowserNoteRepository,
+  notes: ReadonlyArray<{ name: string }>
+): void {
+  const container = document.querySelector<HTMLDivElement>('#mvp-file-list');
+
+  if (!container) {
+    throw new Error('File Explorer list not found');
+  }
+
+  const folderElement = document.createElement('div');
+  folderElement.className = 'explorer-folder';
+  folderElement.textContent = `📁 ${repository.folderName}`;
+
+  const elements: HTMLElement[] = [folderElement];
+
+  if (notes.length === 0) {
+    const emptyElement = document.createElement('div');
+    emptyElement.className = 'explorer-empty';
+    emptyElement.textContent = 'No Markdown files found';
+
+    elements.push(emptyElement);
+  } else {
+    for (const note of notes) {
+      const fileElement = document.createElement('button');
+
+      fileElement.type = 'button';
+      fileElement.className = 'explorer-file';
+      fileElement.textContent = `📄 ${note.name}`;
+      fileElement.dataset.noteName = note.name;
+
+      fileElement.addEventListener('click', async () => {
+        if (switchingWorkspace) {
+          return;
+        }
+        // Avoid overlapping file-opening operations.
+        if (openingExplorerFile) {
+          return;
+        }
+
+        if (savingRealFile) {
+          window.alert('Please wait until saving finishes.');
+          return;
+        }
+
+        openingExplorerFile = true;
+
+        try {
+          // Always read the latest version from disk.
+          const latestNote = await repository.readMarkdownNote(note.name);
+
+          // Reuse the existing editor-opening logic.
+          const opened = openRealNoteInEditor(repository, latestNote);
+
+          if (opened) {
+            console.log('[MVP Explorer File Opened]', {
+              file: latestNote.name,
+              characters: latestNote.content.length,
+            });
+          }
+        } catch (error) {
+          console.error('[MVP Explorer File Open] Failed:', error);
+
+          window.alert(
+            error instanceof Error
+              ? error.message
+              : 'Failed to open Markdown file.'
+          );
+        } finally {
+          openingExplorerFile = false;
+        }
+      });
+
+      elements.push(fileElement);
+    }
+  }
+
+  container.replaceChildren(...elements);
+  explorerRepository = repository;
+  updateExplorerActiveFile();
+
+  console.log('[MVP Explorer Rendered]', {
+    folder: repository.folderName,
+    count: notes.length,
+  });
+}
+
+function openRealNoteInEditor(
+  repository: BrowserNoteRepository,
+  selected: { name: string; content: string }
+): boolean {
+  // Prevent switching notes while saving.
+  if (savingRealFile) {
+    window.alert('Please wait until saving finishes.');
+    return false;
+  }
+
+  // Protect unsaved changes.
+  if (
+    hasUnsavedRealChanges() &&
+    !window.confirm('File has unsaved changes. Discard changes?')
+  ) {
+    return false;
+  }
+
+  const title = document.querySelector<HTMLElement>('.panel-title');
+
+  // Preserve the original sample EditorState only once.
+  if (!savedSampleState) {
+    savedSampleState = mainEditor.state;
+    savedSampleTitle = title?.textContent ?? 'Welcome.md';
+  }
+
+  const realNoteUri = URI.file('/real-notes').joinPath(selected.name);
+
+  const previewState = EditorState.create({
+    doc: selected.content,
+    extensions: [...realFilePreviewExtensions, noteUriFacet.of(realNoteUri)],
+  });
+
+  mainEditor.setState(previewState);
+
+  realFileSession = {
+    repository,
+    name: selected.name,
+    uri: realNoteUri,
+    originalContent: selected.content,
+    editing: false,
+  };
+  updateExplorerActiveFile();
+
+  editRealFileButton.style.display = 'inline-block';
+  saveRealFileButton.style.display = 'none';
+  returnButton.style.display = 'inline-block';
+
+  if (title) {
+    title.textContent = `${selected.name} (Read Only)`;
+  }
+
+  console.log('[MVP Real Note Opened]', {
+    file: selected.name,
+    uri: realNoteUri.toString(),
+    characters: selected.content.length,
+    readOnly: true,
+  });
+
+  return true;
+}
+
 // Temporary button to test reading multiple Markdown notes.
 const listNotesButton = document.createElement('button');
 
@@ -519,6 +815,24 @@ listNotesButton.textContent = 'List Markdown Notes';
 document.querySelector('.topbar')?.appendChild(listNotesButton);
 
 listNotesButton.addEventListener('click', async () => {
+  // Prevent changing workspace while saving.
+  if (savingRealFile) {
+    window.alert('Please wait until saving finishes.');
+    return;
+  }
+
+  // Prevent changing workspace while opening a note.
+  if (openingExplorerFile) {
+    window.alert('Please wait until the note finishes opening.');
+    return;
+  }
+
+  if (switchingWorkspace) {
+    return;
+  }
+
+  switchingWorkspace = true;
+
   try {
     const repository = await BrowserNoteRepository.pick();
 
@@ -528,6 +842,54 @@ listNotesButton.addEventListener('click', async () => {
     }
 
     const notes = await repository.listMarkdownNotes();
+
+    // Ensure no other file operation is in progress.
+    if (savingRealFile || openingExplorerFile) {
+      window.alert('Please wait for the current operation to finish.');
+      return;
+    }
+
+    let decision: WorkspaceSwitchDecision = 'save';
+
+    // Only prompt after the new folder has been selected
+    // and read successfully.
+    if (realFileSession && hasUnsavedRealChanges()) {
+      decision = await askWorkspaceSwitchDecision();
+
+      if (decision === 'cancel') {
+        console.log('[MVP Workspace Switch] Cancelled');
+        return;
+      }
+    }
+
+    // A successful Save must leave no unsaved changes.
+    if (realFileSession && hasUnsavedRealChanges() && decision !== 'discard') {
+      window.alert(
+        'The current note still has unsaved changes. ' +
+          'Workspace switching was cancelled.'
+      );
+      return;
+    }
+
+    // Restore Sample before rendering the new workspace.
+    if (realFileSession) {
+      workspaceDiscardApproved = decision === 'discard';
+
+      try {
+        returnButton.click();
+      } finally {
+        workspaceDiscardApproved = false;
+      }
+
+      if (realFileSession) {
+        throw new Error(
+          'Could not close the current note before switching workspace.'
+        );
+      }
+    }
+
+    // Only now display the new folder.
+    renderExplorerFileList(repository, notes);
 
     console.log('[MVP Note List]', {
       folder: repository.folderName,
@@ -648,68 +1010,17 @@ listNotesButton.addEventListener('click', async () => {
     openInEditorButton.style.marginRight = '12px';
 
     openInEditorButton.addEventListener('click', () => {
-      if (savingRealFile) {
-        window.alert('Please wait until saving finishes.');
-        return;
-      }
-
       const selected = notes.find(note => note.name === select.value);
 
       if (!selected) {
         return;
       }
 
-      if (
-        hasUnsavedRealChanges() &&
-        !window.confirm('File has unsaved changes. Discard changes?')
-      ) {
-        return;
+      const opened = openRealNoteInEditor(repository, selected);
+
+      if (opened) {
+        dialog.close();
       }
-
-      const title = document.querySelector<HTMLElement>('.panel-title');
-
-      // Preserve the original EditorState only once.
-      if (!savedSampleState) {
-        savedSampleState = mainEditor.state;
-        savedSampleTitle = title?.textContent ?? 'Welcome.md';
-      }
-
-      const realNoteUri = URI.file('/real-notes').joinPath(selected.name);
-
-      const previewState = EditorState.create({
-        doc: selected.content,
-        extensions: [
-          ...realFilePreviewExtensions,
-          noteUriFacet.of(realNoteUri),
-        ],
-      });
-
-      mainEditor.setState(previewState);
-
-      realFileSession = {
-        repository,
-        name: selected.name,
-        uri: realNoteUri,
-        originalContent: selected.content,
-        editing: false,
-      };
-
-      editRealFileButton.style.display = 'inline-block';
-      saveRealFileButton.style.display = 'none';
-      if (title) {
-        title.textContent = `${selected.name} (Read Only)`;
-      }
-
-      returnButton.style.display = 'inline-block';
-
-      dialog.close();
-
-      console.log('[MVP Real Note Opened]', {
-        file: selected.name,
-        uri: realNoteUri.toString(),
-        characters: selected.content.length,
-        readOnly: true,
-      });
     });
 
     dialog.replaceChildren(
@@ -731,6 +1042,8 @@ listNotesButton.addEventListener('click', async () => {
     dialog.showModal();
   } catch (error) {
     console.error('[MVP Note List] Failed:', error);
+  } finally {
+    switchingWorkspace = false;
   }
 });
 

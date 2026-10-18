@@ -105,6 +105,29 @@ export class BrowserNoteRepository {
   }
 
   /**
+   * Read the latest content of an existing Markdown file.
+   */
+  async readMarkdownNote(name: string): Promise<MarkdownNoteFile> {
+    if (
+      !name.toLowerCase().endsWith('.md') ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      name === '.' ||
+      name === '..'
+    ) {
+      throw new Error(`Invalid Markdown filename: ${name}`);
+    }
+
+    const handle = await this.directory.getFileHandle(name);
+    const file = await handle.getFile();
+
+    return {
+      name,
+      content: await file.text(),
+    };
+  }
+
+  /**
    * Save an existing Markdown file.
    *
    * Only writes when explicitly called.

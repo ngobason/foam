@@ -44,6 +44,9 @@ body {
 .main-content {
   flex: 1;
   padding: 24px;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
 }
 
 .editor-panel {
@@ -51,6 +54,8 @@ body {
   border: 1px solid #e5e5e5;
   border-radius: 10px;
   overflow: hidden;
+  flex: 1;
+  min-width: 0;
 }
 
 .panel-title {
@@ -427,4 +432,99 @@ body {
 .cm-editor .cm-live-image-error:hover .cm-live-image-error-edit,
 .cm-editor .cm-live-image-error:focus-within .cm-live-image-error-edit {
   opacity: 1;
+}
+
+/* MVP File Explorer */
+
+.file-explorer {
+  width: 240px;
+  flex-shrink: 0;
+  background-color: #ffffff;
+  border: 1px solid #e5e5e5;
+  border-radius: 10px;
+  overflow: auto;
+}
+
+.explorer-title {
+  padding: 16px;
+  border-bottom: 1px solid #eeeeee;
+  font-size: 12px;
+  font-weight: 700;
+  color: #666666;
+}
+
+.file-list {
+  padding: 12px;
+  font-size: 14px;
+  color: #777777;
+}
+
+@media (max-width: 720px) {
+  .main-content {
+    flex-direction: column;
+  }
+
+  .file-explorer {
+    width: 100%;
+    flex-shrink: 1;
+  }
+}
+
+/* File Explorer entries */
+
+.explorer-folder {
+  padding: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #444;
+  overflow-wrap: anywhere;
+}
+
+.explorer-file {
+  padding: 8px 8px 8px 18px;
+  margin-top: 2px;
+  border-radius: 6px;
+  color: #333;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.explorer-empty {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: #888;
+  font-style: italic;
+}
+
+/* Interactive File Explorer entries */
+
+.file-explorer .explorer-file {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-explorer .explorer-file:hover {
+  background-color: #f0f3f7;
+}
+
+.file-explorer .explorer-file:focus-visible {
+  outline: 2px solid #4a90e2;
+  outline-offset: -2px;
+}
+
+/* Active Markdown note in Explorer */
+
+.file-explorer .explorer-file.is-active {
+  background-color: #e7f0ff;
+  color: #174ea6;
+  font-weight: 600;
+}
+
+.file-explorer .explorer-file.is-active:hover {
+  background-color: #dce9ff;
 }
