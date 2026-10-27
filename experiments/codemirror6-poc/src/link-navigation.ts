@@ -49,7 +49,7 @@ function getExternalUrlAt(
 }
 
 /**
- * Handle Ctrl+Hover and Ctrl+Click for external links.
+ * Handle Ctrl/Cmd hover for links and clicks for external links.
  */
 class ExternalLinkInteraction {
   private readonly view: EditorView;
@@ -70,7 +70,7 @@ class ExternalLinkInteraction {
 
   /**
    * Set pointer cursor only when Ctrl/Cmd is held
-   * and the mouse is hovering over an external link.
+   * and the mouse is hovering over a navigable link.
    */
 
   private updateCursor(modifierPressed: boolean): void {
@@ -128,7 +128,7 @@ class ExternalLinkInteraction {
   };
 
   private onWindowBlur = (): void => {
-    this.updateCursor(false);
+    this.onMouseLeave();
   };
 
   /**

@@ -16,7 +16,10 @@ import { wikilinkLivePreview } from './wikilink-live-preview';
 import { markdownLinkLivePreview } from './markdown-link-live-preview';
 import { externalLinkNavigation } from './link-navigation';
 import { foamEditorSync } from './foam-editor-sync';
-import { internalLinkNavigation } from './internal-link-navigation';
+import {
+  internalLinkNavigation,
+  realLinkNavigationContext,
+} from './internal-link-navigation';
 import { getActiveNoteUri } from './foam-editor-sync';
 import { noteSwitchAnnotation } from './foam-editor-sync';
 import { WELCOME_URI, readStoredNote, writeStoredNote } from './note-storage';
@@ -245,6 +248,8 @@ const mainEditor = new EditorView({
 
 // Real-file preview: no sample synchronization or LocalStorage writing.
 const realFilePreviewExtensions: Extension[] = [
+  internalLinkNavigation,
+  externalLinkNavigation,
   basicSetup,
   markdown({ base: markdownLanguage }),
   syntaxHighlighting(headingStyle),
@@ -277,6 +282,8 @@ const realFilePreviewExtensions: Extension[] = [
 ];
 
 const realFileEditExtensions: Extension[] = [
+  internalLinkNavigation,
+  externalLinkNavigation,
   basicSetup,
   markdown({ base: markdownLanguage }),
   syntaxHighlighting(headingStyle),
@@ -599,7 +606,11 @@ editRealFileButton.addEventListener('click', () => {
   mainEditor.setState(
     EditorState.create({
       doc: markdown,
-      extensions: [...realFileEditExtensions, noteUriFacet.of(session.uri)],
+      extensions: [
+        ...realFileEditExtensions,
+        noteUriFacet.of(session.uri),
+        realNoteNavigationContext(),
+      ],
     })
   );
 
@@ -693,6 +704,86 @@ fileTestButton.addEventListener('click', async () => {
 let openingExplorerFile = false;
 
 let explorerRepository: BrowserNoteRepository | null = null;
+
+function canNavigateRealNote(): boolean {
+  if (savingRealFile || openingExplorerFile || switchingWorkspace) {
+    window.alert('Please wait until the current file operation finishes.');
+    return false;
+  }
+
+  if (hasUnsavedRealChanges() || realCoreSyncNeedsRetry) {
+    window.alert(
+      'Please save the current note successfully before following a Wikilink.'
+    );
+    return false;
+  }
+
+  return true;
+}
+
+function realNoteNavigationContext(): Extension {
+  return realLinkNavigationContext.of({
+    adapter: activeRealWorkspace?.adapter ?? null,
+    canNavigate: canNavigateRealNote,
+    openNote: targetUri => {
+      void openRealWikilink(targetUri);
+    },
+  });
+}
+
+async function openRealWikilink(targetUri: URI): Promise<void> {
+  const workspace = activeRealWorkspace;
+  const session = realFileSession;
+
+  if (
+    !canNavigateRealNote() ||
+    !workspace ||
+    !session ||
+    workspace.repository !== session.repository ||
+    targetUri.fragment ||
+    workspace.adapter.getNote(targetUri)?.type !== 'note'
+  ) {
+    return;
+  }
+
+  if (targetUri.toString() === session.uri.toString()) {
+    return;
+  }
+
+  openingExplorerFile = true;
+  const sourceState = mainEditor.state;
+
+  try {
+    const name = targetUri.path.slice('/real-notes/'.length);
+    // Repository validates the filename and reads an existing file only.
+    const latestNote = await workspace.repository.readMarkdownNote(name);
+
+    // Editing, returning to Sample, or starting Save during the read must
+    // never allow a stale navigation to replace the current document.
+    if (
+      activeRealWorkspace !== workspace ||
+      realFileSession !== session ||
+      mainEditor.state !== sourceState ||
+      savingRealFile ||
+      switchingWorkspace ||
+      hasUnsavedRealChanges() ||
+      realCoreSyncNeedsRetry
+    ) {
+      window.alert(
+        'The current note changed. Please try following the Wikilink again.'
+      );
+      return;
+    }
+
+    openRealNoteInEditor(workspace.repository, latestNote);
+  } catch (error) {
+    window.alert(
+      error instanceof Error ? error.message : 'Failed to open Markdown file.'
+    );
+  } finally {
+    openingExplorerFile = false;
+  }
+}
 
 function updateExplorerActiveFile(): void {
   const activeName =
@@ -833,9 +924,18 @@ function openRealNoteInEditor(
 
   const realNoteUri = URI.file('/real-notes').joinPath(selected.name);
 
+  // Link positions must describe the latest disk content shown in the editor.
+  if (activeRealWorkspace?.repository === repository) {
+    activeRealWorkspace.adapter.updateNote(realNoteUri, selected.content);
+  }
+
   const previewState = EditorState.create({
     doc: selected.content,
-    extensions: [...realFilePreviewExtensions, noteUriFacet.of(realNoteUri)],
+    extensions: [
+      ...realFilePreviewExtensions,
+      noteUriFacet.of(realNoteUri),
+      realNoteNavigationContext(),
+    ],
   });
 
   mainEditor.setState(previewState);
