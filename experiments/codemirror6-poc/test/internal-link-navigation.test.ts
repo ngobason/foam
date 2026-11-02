@@ -6,6 +6,7 @@ import { FoamCoreAdapter } from '../src/foam-core-adapter';
 import { noteUriFacet } from '../src/note-context';
 import {
   handleInternalLinkClick,
+  handleInternalLinkMouseDown,
   isNavigableInternalLinkAt,
   realLinkNavigationContext,
 } from '../src/internal-link-navigation';
@@ -13,6 +14,66 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('real workspace Wikilinks', () => {
+  it('resolves edited link positions and aliases without publishing editor text', async () => {
+    const adapter = await FoamCoreAdapter.createFromMarkdownFiles([
+      { name: 'A.md', content: '[[Missing]]' },
+      { name: 'B.md', content: '# B' },
+    ]);
+    try {
+      class TestNode {}
+      vi.stubGlobal('Node', TestNode);
+      const target = new TestNode();
+      const openNote = vi.fn();
+      const state = EditorState.create({
+        doc: 'New unsaved paragraph\n\n[[B|Label]]',
+        extensions: [
+          noteUriFacet.of(URI.file('/real-notes/A.md')),
+          realLinkNavigationContext.of({
+            adapter,
+            canNavigate: () => true,
+            openNote,
+          }),
+        ],
+      });
+      const view = {
+        state,
+        contentDOM: { contains: () => true },
+        posAtCoords: () => state.doc.toString().indexOf('Label'),
+      } as unknown as EditorView;
+      const position = view.posAtCoords({ x: 0, y: 0 })!;
+      expect(isNavigableInternalLinkAt(view, position)).toBe(true);
+      const mouseDown = {
+        button: 0,
+        ctrlKey: true,
+        target,
+        preventDefault: vi.fn(),
+      } as unknown as MouseEvent;
+      expect(handleInternalLinkMouseDown(mouseDown, view)).toBe(true);
+      expect(mouseDown.preventDefault).toHaveBeenCalledOnce();
+      expect(openNote).not.toHaveBeenCalled();
+      expect(view.state).toBe(state);
+      handleInternalLinkClick(
+        {
+          button: 0,
+          ctrlKey: true,
+          target,
+          preventDefault: vi.fn(),
+        } as unknown as MouseEvent,
+        view
+      );
+      expect(openNote).toHaveBeenCalledExactlyOnceWith(
+        URI.file('/real-notes/B.md')
+      );
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+        '[[Missing]]'
+      );
+      expect(
+        adapter.getNote(URI.file('/real-notes/A.md'))?.links[0]?.rawText
+      ).toBe('[[Missing]]');
+    } finally {
+      adapter.workspace.dispose();
+    }
+  });
   it.each([
     ['[[B]]', 'ctrlKey'],
     ['[[B|Label]]', 'metaKey'],

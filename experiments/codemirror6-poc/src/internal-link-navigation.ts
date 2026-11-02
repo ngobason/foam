@@ -1,4 +1,4 @@
-import type { ResourceLink, URI } from '@foam/core';
+import { createMarkdownParser, type ResourceLink, type URI } from '@foam/core';
 import { Facet } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { FoamCoreAdapter } from './foam-core-adapter';
@@ -8,6 +8,8 @@ import {
   getActiveNoteUri,
   openFoamNote,
 } from './foam-editor-sync';
+
+const realLinkParser = createMarkdownParser([]);
 
 type RealLinkNavigationContext = {
   adapter: FoamCoreAdapter | null;
@@ -76,7 +78,9 @@ export function isNavigableInternalLinkAt(
     return false;
   }
 
-  const source = adapter.getNote(sourceUri);
+  const source = realContext
+    ? realLinkParser.parse(sourceUri, view.state.doc.toString())
+    : adapter.getNote(sourceUri);
 
   if (!source) {
     return false;
@@ -123,7 +127,7 @@ export function handleInternalLinkClick(
 
   const realContext = view.state.facet(realLinkNavigationContext);
 
-  // Do not use persisted link positions while the real document is dirty.
+  // Block overlapping file operations; dirty notes use current editor text below.
   if (realContext && !realContext.canNavigate()) {
     event.preventDefault();
     return true;
@@ -144,7 +148,9 @@ export function handleInternalLinkClick(
     return false;
   }
 
-  const source = adapter.getNote(sourceUri);
+  const source = realContext
+    ? realLinkParser.parse(sourceUri, view.state.doc.toString())
+    : adapter.getNote(sourceUri);
 
   if (!source) {
     return false;
@@ -219,6 +225,29 @@ export function handleInternalLinkClick(
   return true;
 }
 
+/** Keep the pre-click selection available when the user cancels navigation. */
+export function handleInternalLinkMouseDown(
+  event: MouseEvent,
+  view: EditorView
+): boolean {
+  if (
+    !view.state.facet(realLinkNavigationContext) ||
+    event.button !== 0 ||
+    (!event.ctrlKey && !event.metaKey) ||
+    !(event.target instanceof Node) ||
+    !view.contentDOM.contains(event.target)
+  ) {
+    return false;
+  }
+  const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  if (position === null || !isNavigableInternalLinkAt(view, position)) {
+    return false;
+  }
+  event.preventDefault();
+  return true;
+}
+
 export const internalLinkNavigation = EditorView.domEventHandlers({
+  mousedown: handleInternalLinkMouseDown,
   click: handleInternalLinkClick,
 });

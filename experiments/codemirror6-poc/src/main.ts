@@ -34,6 +34,10 @@ import { noteUriFacet } from './note-context';
 import { readWelcomeFromDisk } from './file-system-smoke';
 import { BrowserNoteRepository } from './browser-note-repository';
 import { FoamCoreAdapter } from './foam-core-adapter';
+import {
+  prepareRealNoteNavigation,
+  type NoteSwitchDecision,
+} from './real-note-navigation';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -331,6 +335,7 @@ type RealFileSession = {
 let realFileSession: RealFileSession | null = null;
 let savingRealFile = false;
 let switchingWorkspace = false;
+let followingRealWikilink = false;
 let workspaceDiscardApproved = false;
 
 type ActiveRealWorkspace = {
@@ -481,9 +486,9 @@ saveRealFileButton.addEventListener('click', () => {
   void saveActiveRealFile();
 });
 
-type WorkspaceSwitchDecision = 'save' | 'discard' | 'cancel';
-
-function askWorkspaceSwitchDecision(): Promise<WorkspaceSwitchDecision> {
+function askWorkspaceSwitchDecision(
+  action = 'switching workspace'
+): Promise<NoteSwitchDecision> {
   return new Promise(resolve => {
     const dialog = document.createElement('dialog');
 
@@ -500,7 +505,7 @@ function askWorkspaceSwitchDecision(): Promise<WorkspaceSwitchDecision> {
     const message = document.createElement('p');
     message.textContent =
       'The current Markdown note has unsaved changes. ' +
-      'What would you like to do before switching workspace?';
+      `What would you like to do before ${action}?`;
 
     const actions = document.createElement('div');
 
@@ -525,7 +530,7 @@ function askWorkspaceSwitchDecision(): Promise<WorkspaceSwitchDecision> {
 
     let finished = false;
 
-    function finish(decision: WorkspaceSwitchDecision): void {
+    function finish(decision: NoteSwitchDecision): void {
       if (finished) return;
 
       finished = true;
@@ -640,6 +645,7 @@ returnButton.style.display = 'none';
 document.querySelector('.topbar')?.appendChild(returnButton);
 
 returnButton.addEventListener('click', () => {
+  if (followingRealWikilink) return;
   if (savingRealFile) {
     window.alert('Please wait until saving finishes.');
     return;
@@ -711,13 +717,6 @@ function canNavigateRealNote(): boolean {
     return false;
   }
 
-  if (hasUnsavedRealChanges() || realCoreSyncNeedsRetry) {
-    window.alert(
-      'Please save the current note successfully before following a Wikilink.'
-    );
-    return false;
-  }
-
   return true;
 }
 
@@ -751,36 +750,34 @@ async function openRealWikilink(targetUri: URI): Promise<void> {
   }
 
   openingExplorerFile = true;
+  followingRealWikilink = true;
   const sourceState = mainEditor.state;
 
   try {
     const name = targetUri.path.slice('/real-notes/'.length);
-    // Repository validates the filename and reads an existing file only.
-    const latestNote = await workspace.repository.readMarkdownNote(name);
+    const latestNote = await prepareRealNoteNavigation({
+      // Read an existing file before offering any data-loss decision.
+      readTarget: () => workspace.repository.readMarkdownNote(name),
+      isCurrent: () =>
+        activeRealWorkspace === workspace &&
+        realFileSession === session &&
+        mainEditor.state === sourceState &&
+        !savingRealFile &&
+        !switchingWorkspace,
+      hasUnsavedChanges: hasUnsavedRealChanges,
+      needsSync: () => realCoreSyncNeedsRetry,
+      askDecision: () => askWorkspaceSwitchDecision('following this Wikilink'),
+    });
 
-    // Editing, returning to Sample, or starting Save during the read must
-    // never allow a stale navigation to replace the current document.
-    if (
-      activeRealWorkspace !== workspace ||
-      realFileSession !== session ||
-      mainEditor.state !== sourceState ||
-      savingRealFile ||
-      switchingWorkspace ||
-      hasUnsavedRealChanges() ||
-      realCoreSyncNeedsRetry
-    ) {
-      window.alert(
-        'The current note changed. Please try following the Wikilink again.'
-      );
-      return;
+    if (latestNote) {
+      openRealNoteInEditor(workspace.repository, latestNote, true);
     }
-
-    openRealNoteInEditor(workspace.repository, latestNote);
   } catch (error) {
     window.alert(
       error instanceof Error ? error.message : 'Failed to open Markdown file.'
     );
   } finally {
+    followingRealWikilink = false;
     openingExplorerFile = false;
   }
 }
@@ -898,8 +895,10 @@ function renderExplorerFileList(
 
 function openRealNoteInEditor(
   repository: BrowserNoteRepository,
-  selected: { name: string; content: string }
+  selected: { name: string; content: string },
+  wikilinkDecisionApproved = false
 ): boolean {
+  if (followingRealWikilink && !wikilinkDecisionApproved) return false;
   // Prevent switching notes while saving.
   if (savingRealFile) {
     window.alert('Please wait until saving finishes.');
@@ -909,6 +908,7 @@ function openRealNoteInEditor(
   // Protect unsaved changes.
   if (
     hasUnsavedRealChanges() &&
+    !wikilinkDecisionApproved &&
     !window.confirm('File has unsaved changes. Discard changes?')
   ) {
     return false;
@@ -1010,7 +1010,7 @@ listNotesButton.addEventListener('click', async () => {
       return;
     }
 
-    let decision: WorkspaceSwitchDecision = 'save';
+    let decision: NoteSwitchDecision = 'save';
 
     // Only prompt after the new folder has been selected
     // and read successfully.
