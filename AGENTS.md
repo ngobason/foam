@@ -123,3 +123,7 @@ Written for people new to Foam who may not be technical. Show how to use a featu
 - Release process and changeset rules: `docs/dev/releasing-foam.md`
 - Testing details: `docs/dev/testing-conventions.md`
 - GitHub: use `gh`. Reads freely; **never write without being asked**.
+
+## Foam Editor context
+
+For Foam Editor work in `experiments/codemirror6-poc/`, read [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md) for approved product direction and [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for checkpoint evidence and the next action. These documents supplement the repository rules above.
