@@ -2,7 +2,8 @@
 
 **Cập nhật định hướng:** 15/11/2026.
 **Cập nhật checkpoint M1.2 + UX-01:** 16/11/2026.
-**Cập nhật M1.2b-GATE:** 16/11/2026 — nghiệm thu có điều kiện, chờ Git checkpoint.
+**Cập nhật M1.2b-GATE:** 16/11/2026 — accepted with documented limitations, committed tại `bd0e6e71`.
+**Cập nhật M1.3-T1:** 16/11/2026 — implementation và browser acceptance PASS, chờ Git checkpoint.
 **Phiên bản tài liệu:** V3 — Obsidian-like Editing / Views / Workspace.
 **Bằng chứng:** HEAD và staging đã được kiểm tra bằng Git local trong lần cập nhật này. Kết quả automated dưới đây là **Codex-reported**; browser/UI là **user-confirmed** trong phạm vi được nêu. Không chạy lại test/build hoặc browser trong lần cập nhật tài liệu này; **M1 chưa hoàn tất**.
 
@@ -15,15 +16,16 @@
 
 ## 2. Git checkpoint — lịch sử và trạng thái hiện tại
 
-| Mốc                     | Hash/nhánh                                           | Bằng chứng & lưu ý                                                                                                           |
-| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **M0 application-code** | `f9852324` / `dev/codemirror6-poc`                   | Save/Discard/Cancel + conflict + real navigation, người dùng xác nhận test/commit/push                                       |
-| **M1.0 shared docs**    | `83ceb94c` / `dev/codemirror6-poc`                   | User chạy `git status` và `git log` xác nhận local/upstream cùng hash tại thời điểm báo                                      |
-| **V3 documentation**    | `5ec65eec` / `dev/codemirror6-poc`                   | Checkpoint AGENTS và bộ docs V3 trước commit application code                                                                |
-| **M1.2a/b + UX-01**     | `1ed65d89` / `dev/codemirror6-poc`                   | HEAD hiện tại; sáu file application code/test ở §5 đã commit cùng status, sau trạng thái staged được ghi trong báo cáo trước |
-| **M1.2b FIX-01/FIX-02** | **Chưa commit tại thời điểm lập báo cáo 16/11/2026** | Thay đổi hiện tại ở `src/main.ts` và `test/real-wikilink-flow.test.ts`; chưa có commit hash mới                              |
+| Mốc                            | Hash/nhánh                                           | Bằng chứng & lưu ý                                                                                            |
+| ------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **M0 application-code**        | `f9852324` / `dev/codemirror6-poc`                   | Save/Discard/Cancel + conflict + real navigation, người dùng xác nhận test/commit/push                        |
+| **M1.0 shared docs**           | `83ceb94c` / `dev/codemirror6-poc`                   | User chạy `git status` và `git log` xác nhận local/upstream cùng hash tại thời điểm báo                       |
+| **V3 documentation**           | `5ec65eec` / `dev/codemirror6-poc`                   | Checkpoint AGENTS và bộ docs V3 trước commit application code                                                 |
+| **M1.2a/b + UX-01**            | `1ed65d89` / `dev/codemirror6-poc`                   | Sáu file application code/test ở §5 đã commit cùng status, sau trạng thái staged trong báo cáo trước          |
+| **M1.2b-GATE + FIX-01/FIX-02** | `bd0e6e71` / `dev/codemirror6-poc`                   | HEAD hiện tại; Auto-save accepted with documented limitations, thay cho trạng thái chờ commit ở báo cáo trước |
+| **M1.3-T1**                    | **chưa commit tại thời điểm lập báo cáo 16/11/2026** | Implementation và browser B1–B5 PASS; ba file code/test ở §5 đang chờ checkpoint, chưa có hash mới            |
 
-**Lưu ý:** Last committed checkpoint là `1ed65d89`; FIX-01/FIX-02 và nghiệm thu có điều kiện dưới đây vẫn chờ Git checkpoint. Commit application code không đồng nghĩa toàn bộ M1 đã hoàn tất. Giữ nguyên mọi thay đổi local và staging; không tự reset/stash/clean. `.vscode/launch.json` được người dùng cố ý sửa local; **không chạm, không stage, không revert**. Lần cập nhật này chỉ sửa `docs/PROJECT_STATUS.md`, không stage/commit/push.
+**Lưu ý:** Last committed HEAD là `bd0e6e71`; chỉ M1.3-T1 đang chờ Git checkpoint. **Toàn bộ M1 và M1.3 chưa hoàn tất.** Giữ nguyên mọi thay đổi local và staging; không tự reset/stash/clean. `.vscode/launch.json` được người dùng cố ý sửa local; **không chạm, không stage, không revert**. Lần cập nhật này chỉ sửa `docs/PROJECT_STATUS.md`, không stage/commit/push.
 
 ## 3. Tính năng đã hoàn tất theo bằng chứng lịch sử
 
@@ -32,9 +34,9 @@
 - **31.7.2 / `f9852324`:** Save/Discard/Cancel fallback với dirty source; conflict không gây mất dữ liệu; 25 tests lịch sử và build PASS theo báo cáo ở checkpoint M0.
 - **M1.0 / `83ceb94c`:** shared context files, Copilot và Codex independent comprehension checks PASS; đây là checkpoint tài liệu cũ, được thay đổi scope bởi V3.
 
-## 4. M1.2b-GATE — READY WITH DOCUMENTED LIMITATIONS, pending Git checkpoint
+## 4. M1.2b-GATE accepted; M1.3-T1 implemented và browser PASS
 
-**Audit verdict:** **READY WITH DOCUMENTED LIMITATIONS**. Auto-save được nghiệm thu có điều kiện theo bằng chứng và giới hạn dưới đây, chờ Git checkpoint cho FIX-01/FIX-02. Đây không phải tuyên bố toàn bộ M1 DONE hoặc mọi trường hợp browser đã được chứng minh.
+**M1.2b-GATE:** audit verdict **READY WITH DOCUMENTED LIMITATIONS**, đã được accepted with documented limitations và commit cùng FIX-01/FIX-02 tại **`bd0e6e71`**. Các giới hạn dưới đây vẫn áp dụng; không suy diễn toàn bộ M1 DONE hoặc mọi trường hợp browser đã được chứng minh.
 
 **M1.1:** Copilot đã khảo sát read-only và ChatGPT chốt kiến trúc minimal autosave (debounce 750ms, snapshot immutable, serialize writes, disk/Core distinction, external conflict guard).
 
@@ -42,7 +44,7 @@
 
 **M1.2b:** Codex báo tích hợp vào `src/main.ts` và bổ sung tests trong `test/real-wikilink-flow.test.ts`, `test/real-note-autosave.test.ts`. Chuyển Edit/Save qua cùng coordinator, quyền ghi xin trong user gesture, status lưu và session guards; sample/localStorage cô lập. Copilot independent read-only review kết luận **PASS WITH MINOR ISSUES**, đủ để thử browser trên disposable workspace.
 
-**Kết quả Codex báo cáo, chưa độc lập chạy lại:** tại M1.2b, application flow **31/31 PASS**, coordinator **19/19 PASS**, toàn bộ experiment **66/66 Vitest PASS**. Sau UX-01 thêm regression hiển thị Save: application flow **32/32 PASS**, toàn bộ **67/67 Vitest PASS**. Sau FIX-01: **70/70 PASS**; sau FIX-02, kết quả mới nhất là **79/79 Vitest PASS**, build/Prettier/whitespace (`git diff --check`) PASS trên **Node 24.21.0**. **Node 22 chưa được xác minh.** Build còn warnings cũ về dependency `gray-matter` `eval` và bundle lớn.
+**Kết quả Codex báo cáo tại M1.2b, chưa độc lập chạy lại:** application flow **31/31 PASS**, coordinator **19/19 PASS**, toàn bộ experiment **66/66 Vitest PASS**. Sau UX-01 thêm regression hiển thị Save: application flow **32/32 PASS**, toàn bộ **67/67 Vitest PASS**. Sau FIX-01: **70/70 PASS**; sau FIX-02 tại gate: **79/79 Vitest PASS**, build/Prettier/whitespace (`git diff --check`) PASS trên **Node 24.21.0**. **Node 22 chưa được xác minh.** Build còn warnings cũ về dependency `gray-matter` `eval` và bundle lớn.
 
 **Browser basic real-file Auto-save — user-confirmed PASS:** `A.md` hiển thị `Saved`; người dùng kiểm tra bằng PowerShell xác nhận `AUTOSAVE_UI_01` đã persist vào file Markdown vật lý sau redesign. Đây là bằng chứng basic smoke, không suy diễn rằng mọi trường hợp reload/close hoặc toàn bộ AS-01–18 đã PASS.
 
@@ -60,6 +62,10 @@
 - **AS-18:** sample/localStorage isolation chủ yếu là bằng chứng **automated**.
 - **Node 22:** chưa được xác minh; kết quả Node 24.21.0 không thay thế kiểm tra compatibility này.
 
+**M1.3-T1 — safe navigation fallback hoàn tất trong phạm vi T1, chờ Git checkpoint:** Explorer và Return to Sample dùng chung policy Save/Discard/Cancel qua `prepareRealNoteNavigation()` và dialog hiện có. Clean navigation không cần dialog. Save chờ flush và persistence an toàn trước khi chuyển; Save failure/conflict/permission failure giữ draft, chặn navigation và cho retry/Cancel. Cancel giữ note và resume Auto-save phù hợp; Discard chỉ áp dụng sau lựa chọn rõ ràng và khi target vẫn hợp lệ. Source-session/workspace/editor identity guards được kiểm tra lại sau async operations; không dispose source khi disk write in-flight. Wikilink, workspace switching, Core sync, conflict guard, line endings và sample/localStorage isolation được bảo toàn.
+
+**M1.3-T1 acceptance:** browser **B1–B5 user-confirmed PASS**; Copilot independent review **PASS WITH MINOR ISSUES**. Codex-reported validation: focused **91/91 PASS**, full PoC **99/99 Vitest PASS**, build/Prettier/whitespace PASS trên **Node 24.21.0**. Không chạy lại test/build/browser trong lần cập nhật docs này. Browser in-flight race tests **chưa được tái hiện độc lập**; automated regressions cung cấp bằng chứng cho các trường hợp write đang chạy, stale source và delayed target reads. Không coi B1–B5 là bằng chứng cho mọi async race trên browser.
+
 ## 5. Các file liên quan đến trạng thái hiện tại
 
 Dưới `experiments/codemirror6-poc/`:
@@ -73,7 +79,9 @@ Dưới `experiments/codemirror6-poc/`:
 - `test/real-note-autosave.test.ts` — coordinator tests (file mới).
 - `test/real-wikilink-flow.test.ts` — integration tests cho Auto-save/navigation và UI Save.
 
-**FIX-01/FIX-02 tại thời điểm nghiệm thu trước Git checkpoint:** `src/main.ts` và `test/real-wikilink-flow.test.ts`; giữ nguyên các thay đổi này cho checkpoint tiếp theo.
+**FIX-01/FIX-02 đã commit tại `bd0e6e71`:** `src/main.ts` và `test/real-wikilink-flow.test.ts`, cùng status nghiệm thu.
+
+**M1.3-T1 tại thời điểm trước Git checkpoint:** `src/main.ts`, `src/real-note-navigation.ts` và `test/real-wikilink-flow.test.ts`; giữ nguyên code/test và staging cho checkpoint tiếp theo.
 
 **Module liên quan, ngoài sáu file checkpoint:**
 
@@ -84,7 +92,7 @@ Dưới `experiments/codemirror6-poc/`:
 
 ## 6. Những giới hạn đã biết hoặc chưa xác minh
 
-- Explorer vẫn dùng `window.confirm` thay vì dialog fallback thống nhất; M1.3 sẽ cải thiện.
+- Sau T1, dirty/pending navigation vẫn cần lựa chọn Save/Discard/Cancel; khi disk write đang chạy vẫn chặn điều hướng. Safe automatic save-before-navigation thuộc M1.3-T2, chưa triển khai. History và cursor/scroll restoration cũng chưa thuộc phạm vi đã hoàn tất.
 - `beforeunload` chỉ cảnh báo, không thể bảo đảm asynchronous save khi đóng tab.
 - Browser repository theo báo cáo xử lý file `.md` sẵn có ở folder được chọn, chưa full nested traversal/CRUD.
 - Live Preview có một số extension nhưng không có nghiệm thu Source Mode/Reading View đúng semantics Obsidian; việc có Preview/Edit không đồng nghĩa ba chế độ đã đạt.
@@ -96,9 +104,9 @@ Dưới `experiments/codemirror6-poc/`:
 
 ## 7. Immediate next action
 
-**Hiện tại:** ghi nhận verdict M1.2b-GATE có điều kiện và chờ Git checkpoint cho FIX-01/FIX-02, chỉ khi người dùng cho phép stage/commit. Không tạo hoặc suy diễn commit hash mới.
+**Hiện tại:** M1.2b-GATE đã commit tại `bd0e6e71`; M1.3-T1 đã implementation + browser B1–B5 PASS và chờ Git checkpoint, chỉ stage/commit khi người dùng cho phép. Không tạo hoặc suy diễn hash mới.
 
-**Next after M1.2b checkpoint: M1.3 — seamless navigation và thống nhất fallback.** M1.3, M1.4 (recovery/conflict hardening), M1.5 (stabilization) và M2 đều **NOT STARTED**. Tiếp tục M1.3 → M1.4 → M1.5 theo roadmap và các giới hạn ở §4; **không bắt đầu M2** trước khi M1 ổn định và được nghiệm thu. Nếu phát hiện lỗi data safety, bảo vệ draft rồi sửa focused trước khi mở rộng; UX-02a vẫn chỉ là backlog M2/M3.
+**Next after Git checkpoint: M1.3-T2 — safe automatic save-before-navigation.** M1.3-T2/T3/T4 đều **NOT STARTED**; **overall M1.3 và M1 chưa hoàn tất**. M1.4 (recovery/conflict hardening), M1.5 (stabilization) và M2 cũng chưa bắt đầu. Tiếp tục từng bước được duyệt theo roadmap và các giới hạn ở §4; không bắt đầu M2 trước khi M1 ổn định và được nghiệm thu. Nếu phát hiện lỗi data safety, bảo vệ draft rồi sửa focused trước khi mở rộng; UX-02a vẫn chỉ là backlog M2/M3.
 
 ## 8. Quy tắc cập nhật docs / Git tại checkpoint
 

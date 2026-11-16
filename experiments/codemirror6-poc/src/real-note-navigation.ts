@@ -1,16 +1,14 @@
-import type { MarkdownNoteFile } from './browser-note-repository';
-
 export type NoteSwitchDecision = 'save' | 'discard' | 'cancel';
 
 /** Prepare a target without replacing or publishing the source editor state. */
-export async function prepareRealNoteNavigation(context: {
-  readTarget(): Promise<MarkdownNoteFile>;
+export async function prepareRealNoteNavigation<T>(context: {
+  readTarget(): Promise<T>;
   isCurrent(): boolean;
   hasUnsavedChanges(): boolean;
   needsSync(): boolean;
   // The shared dialog performs Save and only resolves 'save' on success.
   askDecision(): Promise<NoteSwitchDecision>;
-}): Promise<MarkdownNoteFile | null> {
+}): Promise<T | null> {
   let target = await context.readTarget();
   if (!context.isCurrent()) return null;
 

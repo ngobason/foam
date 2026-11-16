@@ -728,11 +728,7 @@ function returnToSample(discardApproved = false): boolean {
     return false;
   }
 
-  if (
-    hasUnsavedRealChanges() &&
-    !discardApproved &&
-    !window.confirm('File has unsaved changes. Return without saving?')
-  ) {
+  if (hasUnsavedRealChanges() && !discardApproved) {
     return false;
   }
 
@@ -752,10 +748,39 @@ function returnToSample(discardApproved = false): boolean {
   return true;
 }
 
-returnButton.addEventListener('click', () => {
+returnButton.addEventListener('click', async () => {
   if (followingRealWikilink || openingExplorerFile || switchingWorkspace)
     return;
-  returnToSample();
+  if (isSavingRealFile()) {
+    window.alert('Please wait until saving finishes.');
+    return;
+  }
+  const sampleState = savedSampleState;
+  if (!sampleState) return;
+  const session = realFileSession;
+  const workspace = activeRealWorkspace;
+  const sourceState = mainEditor.state;
+  openingExplorerFile = true;
+  session?.autosave?.suspend();
+  try {
+    const target = await prepareRealNoteNavigation({
+      readTarget: async () => sampleState,
+      isCurrent: () =>
+        realFileSession === session &&
+        activeRealWorkspace === workspace &&
+        mainEditor.state === sourceState &&
+        savedSampleState === sampleState &&
+        !isSavingRealFile() &&
+        !switchingWorkspace,
+      hasUnsavedChanges: hasUnsavedRealChanges,
+      needsSync: () => session?.autosave?.needsSync ?? false,
+      askDecision: () => askWorkspaceSwitchDecision('returning to Sample'),
+    });
+    if (target) returnToSample(true);
+  } finally {
+    openingExplorerFile = false;
+    resumeRealFileAutosave(session);
+  }
 });
 
 // Temporary button for testing real file access.
@@ -887,6 +912,55 @@ function updateExplorerActiveFile(): void {
   }
 }
 
+async function openExplorerNote(
+  repository: BrowserNoteRepository,
+  name: string
+): Promise<boolean> {
+  if (switchingWorkspace || openingExplorerFile) return false;
+  if (isSavingRealFile()) {
+    window.alert('Please wait until saving finishes.');
+    return false;
+  }
+  const workspace = activeRealWorkspace;
+  if (workspace?.repository !== repository) return false;
+  const session = realFileSession;
+  const sourceState = mainEditor.state;
+  openingExplorerFile = true;
+  session?.autosave?.suspend();
+  try {
+    const latestNote = await prepareRealNoteNavigation({
+      readTarget: () => repository.readMarkdownNote(name),
+      isCurrent: () =>
+        realFileSession === session &&
+        activeRealWorkspace === workspace &&
+        mainEditor.state === sourceState &&
+        !isSavingRealFile() &&
+        !switchingWorkspace,
+      hasUnsavedChanges: hasUnsavedRealChanges,
+      needsSync: () => session?.autosave?.needsSync ?? false,
+      askDecision: () => askWorkspaceSwitchDecision('opening this note'),
+    });
+    if (!latestNote) return false;
+    const opened = openRealNoteInEditor(repository, latestNote, true);
+    if (opened) {
+      console.log('[MVP Explorer File Opened]', {
+        file: latestNote.name,
+        characters: latestNote.content.length,
+      });
+    }
+    return opened;
+  } catch (error) {
+    console.error('[MVP Explorer File Open] Failed:', error);
+    window.alert(
+      error instanceof Error ? error.message : 'Failed to open Markdown file.'
+    );
+    return false;
+  } finally {
+    openingExplorerFile = false;
+    resumeRealFileAutosave(session);
+  }
+}
+
 function renderExplorerFileList(
   repository: BrowserNoteRepository,
   notes: ReadonlyArray<{ name: string }>
@@ -920,48 +994,7 @@ function renderExplorerFileList(
       fileElement.dataset.noteName = note.name;
 
       fileElement.addEventListener('click', async () => {
-        if (switchingWorkspace) {
-          return;
-        }
-        // Avoid overlapping file-opening operations.
-        if (openingExplorerFile) {
-          return;
-        }
-
-        if (isSavingRealFile()) {
-          window.alert('Please wait until saving finishes.');
-          return;
-        }
-
-        openingExplorerFile = true;
-        const sourceSession = realFileSession;
-        sourceSession?.autosave?.suspend();
-
-        try {
-          // Always read the latest version from disk.
-          const latestNote = await repository.readMarkdownNote(note.name);
-
-          // Reuse the existing editor-opening logic.
-          const opened = openRealNoteInEditor(repository, latestNote);
-
-          if (opened) {
-            console.log('[MVP Explorer File Opened]', {
-              file: latestNote.name,
-              characters: latestNote.content.length,
-            });
-          }
-        } catch (error) {
-          console.error('[MVP Explorer File Open] Failed:', error);
-
-          window.alert(
-            error instanceof Error
-              ? error.message
-              : 'Failed to open Markdown file.'
-          );
-        } finally {
-          openingExplorerFile = false;
-          resumeRealFileAutosave(sourceSession);
-        }
+        await openExplorerNote(repository, note.name);
       });
 
       elements.push(fileElement);
@@ -981,9 +1014,9 @@ function renderExplorerFileList(
 function openRealNoteInEditor(
   repository: BrowserNoteRepository,
   selected: { name: string; content: string },
-  wikilinkDecisionApproved = false
+  navigationDecisionApproved = false
 ): boolean {
-  if (followingRealWikilink && !wikilinkDecisionApproved) return false;
+  if (followingRealWikilink && !navigationDecisionApproved) return false;
   if (switchingWorkspace || activeRealWorkspace?.repository !== repository)
     return false;
   // Prevent switching notes while saving.
@@ -1000,11 +1033,7 @@ function openRealNoteInEditor(
   }
 
   // Protect unsaved changes.
-  if (
-    hasUnsavedRealChanges() &&
-    !wikilinkDecisionApproved &&
-    !window.confirm('File has unsaved changes. Discard changes?')
-  ) {
+  if (hasUnsavedRealChanges() && !navigationDecisionApproved) {
     return false;
   }
 
@@ -1352,7 +1381,7 @@ listNotesButton.addEventListener('click', async () => {
     openInEditorButton.textContent = 'Open in CodeMirror';
     openInEditorButton.className = 'button-primary picker-open';
 
-    openInEditorButton.addEventListener('click', () => {
+    openInEditorButton.addEventListener('click', async () => {
       if (openingExplorerFile || switchingWorkspace) return;
       const selected = notes.find(note => note.name === select.value);
 
@@ -1360,7 +1389,7 @@ listNotesButton.addEventListener('click', async () => {
         return;
       }
 
-      const opened = openRealNoteInEditor(repository, selected);
+      const opened = await openExplorerNote(repository, selected.name);
 
       if (opened) {
         dialog.close();
