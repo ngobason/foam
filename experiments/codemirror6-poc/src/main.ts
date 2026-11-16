@@ -34,6 +34,7 @@ import { noteUriFacet } from './note-context';
 import { readWelcomeFromDisk } from './file-system-smoke';
 import { BrowserNoteRepository } from './browser-note-repository';
 import { FoamCoreAdapter } from './foam-core-adapter';
+import { RealNoteAutosave } from './real-note-autosave';
 import {
   prepareRealNoteNavigation,
   type NoteSwitchDecision,
@@ -48,24 +49,33 @@ if (!app) {
 // Main application layout.
 app.innerHTML = `
   <div class="workspace">
-    <header class="topbar">
+    <header class="topbar" aria-label="Workspace actions">
       <div class="brand">
+        <span class="brand-mark" aria-hidden="true">F</span>
         Foam Editor
-        <span>CodeMirror 6 PoC</span>
       </div>
+      <div class="workspace-actions" role="group" aria-label="Workspace"></div>
+      <div class="note-actions" role="group" aria-label="Current note"></div>
+      <details class="developer-tools">
+        <summary>Developer</summary>
+        <div class="developer-actions"></div>
+      </details>
     </header>
 
     <main class="main-content">
-  <aside class="file-explorer">
-    <div class="explorer-title">EXPLORER</div>
+  <aside class="file-explorer" aria-label="File Explorer">
+    <h2 class="explorer-title">Explorer</h2>
 
     <div id="mvp-file-list" class="file-list">
-      Chưa mở thư mục
+      <div class="explorer-empty">Choose List Markdown Notes to open a workspace.</div>
     </div>
   </aside>
 
-  <section class="editor-panel">
-    <div class="panel-title">Welcome.md</div>
+  <section class="editor-panel" aria-label="Markdown editor">
+    <div class="note-header">
+      <h1 class="panel-title">Welcome.md</h1>
+      <div class="save-status" role="status" aria-live="polite" aria-atomic="true">Sample · browser storage</div>
+    </div>
     <div id="editor"></div>
   </section>
 </main>
@@ -139,6 +149,11 @@ const savedMarkdown = readStoredNote(WELCOME_URI);
 const headingStyle = HighlightStyle.define([
   // Reuse default styles, except the underlined heading rule.
   ...defaultHighlightStyle.specs.filter(spec => spec.tag !== tags.heading),
+
+  {
+    tag: tags.monospace,
+    fontFamily: 'Consolas, "Courier New", monospace',
+  },
 
   // Headings should be bold, without underlining.
   {
@@ -303,21 +318,14 @@ const realFileEditExtensions: Extension[] = [
   markdownLinkLivePreview,
   imageLivePreview,
 
-  // Track changes without writing to disk.
+  // Real-file edits use a separate coordinator, never sample LocalStorage.
   EditorView.updateListener.of(update => {
     if (!update.docChanged || !realFileSession) {
       return;
     }
 
-    const changed = hasUnsavedRealChanges();
-
-    const title = document.querySelector<HTMLElement>('.panel-title');
-
-    if (title) {
-      title.textContent = changed
-        ? `${realFileSession.name} * (Not Saved)`
-        : `${realFileSession.name} (Editing)`;
-    }
+    realFileSession.autosave?.request(update.state.doc.toString());
+    updateRealFileStatus(realFileSession);
   }),
 ];
 
@@ -328,7 +336,9 @@ type RealFileSession = {
   repository: BrowserNoteRepository;
   name: string;
   uri: URI;
-  originalContent: string;
+  autosave: RealNoteAutosave | null;
+  writeAccess: boolean;
+  saveError: string | null;
   editing: boolean;
 };
 
@@ -336,7 +346,6 @@ let realFileSession: RealFileSession | null = null;
 let savingRealFile = false;
 let switchingWorkspace = false;
 let followingRealWikilink = false;
-let workspaceDiscardApproved = false;
 
 type ActiveRealWorkspace = {
   repository: BrowserNoteRepository;
@@ -345,139 +354,140 @@ type ActiveRealWorkspace = {
 };
 
 let activeRealWorkspace: ActiveRealWorkspace | null = null;
-let realCoreSyncNeedsRetry = false;
+
+function isSavingRealFile(): boolean {
+  return savingRealFile || (realFileSession?.autosave?.saving ?? false);
+}
 
 function hasUnsavedRealChanges(): boolean {
   if (!realFileSession?.editing) {
     return false;
   }
 
-  return mainEditor.state.doc.toString() !== realFileSession.originalContent;
+  return (
+    mainEditor.state.doc.toString() !==
+    realFileSession.autosave?.persistedSnapshot.content
+  );
+}
+
+function renderNoteHeader(name: string, status: string): void {
+  const title = document.querySelector<HTMLElement>('.panel-title');
+  if (title && title.textContent !== name) title.textContent = name;
+  const indicator = document.querySelector<HTMLElement>('.save-status');
+  if (indicator) {
+    if (indicator.textContent !== status) indicator.textContent = status;
+    indicator.dataset.tone = /failed|permission/i.test(status)
+      ? 'error'
+      : status === 'Saved'
+      ? 'success'
+      : 'neutral';
+  }
+}
+
+function updateRealFileStatus(session: RealFileSession): void {
+  if (realFileSession !== session || !session.editing) return;
+  const dirty = hasUnsavedRealChanges();
+  const status = isSavingRealFile()
+    ? 'Saving…'
+    : session.autosave?.needsSync
+    ? 'Disk saved; Core sync failed — retry Save'
+    : session.saveError
+    ? `Save failed: ${session.saveError}`
+    : dirty
+    ? 'Unsaved changes'
+    : 'Saved';
+  renderNoteHeader(session.name, status);
+}
+
+function reportRealFileSaveError(
+  session: RealFileSession,
+  error: unknown
+): void {
+  if (realFileSession !== session) return;
+  session.saveError = error instanceof Error ? error.message : 'Save failed';
+  updateRealFileStatus(session);
+  window.alert(
+    session.autosave?.needsSync
+      ? 'The Markdown file was saved to disk, but Foam Core synchronization ' +
+          'failed. Your saved file is preserved. Retry with Save.'
+      : session.saveError
+  );
+}
+
+// Call only from an Edit or Save click, never from an auto-save callback.
+async function requestRealFileWriteAccess(
+  session: RealFileSession
+): Promise<boolean> {
+  try {
+    session.writeAccess = await session.repository.requestWriteAccess();
+    if (!session.writeAccess)
+      throw new Error('Write permission required. Retry with Save.');
+    return true;
+  } catch (error) {
+    session.writeAccess = false;
+    reportRealFileSaveError(session, error);
+    return false;
+  }
+}
+
+function resumeRealFileAutosave(session: RealFileSession | null): void {
+  if (
+    session &&
+    realFileSession === session &&
+    !openingExplorerFile &&
+    !switchingWorkspace &&
+    !followingRealWikilink
+  )
+    session.autosave?.resume();
 }
 
 const saveRealFileButton = document.createElement('button');
 
 saveRealFileButton.type = 'button';
 saveRealFileButton.textContent = 'Save Real File';
+saveRealFileButton.className = 'button-primary';
+saveRealFileButton.title = 'Save now or retry a failed save';
 saveRealFileButton.style.display = 'none';
 
-document.querySelector('.topbar')?.appendChild(saveRealFileButton);
+document.querySelector('.note-actions')?.appendChild(saveRealFileButton);
 
 async function saveActiveRealFile(): Promise<boolean> {
   const session = realFileSession;
+  const autosave = session?.autosave;
+  if (!session?.editing || !autosave || savingRealFile) return false;
 
-  if (!session || !session.editing || savingRealFile) {
-    return false;
-  }
-
-  const workspace = activeRealWorkspace;
-
-  // Never synchronize a note with the wrong workspace.
-  if (!workspace || workspace.repository !== session.repository) {
-    window.alert('Active Foam Workspace does not match this file.');
-    return false;
-  }
-
-  const markdownToSave = mainEditor.state.doc.toString();
-  const needsDiskWrite = markdownToSave !== session.originalContent;
-
-  if (!needsDiskWrite && !realCoreSyncNeedsRetry) {
-    console.log('[MVP Real File Save] No changes');
-    return true;
-  }
+  autosave.request(mainEditor.state.doc.toString());
+  autosave.suspend();
+  const alreadySaving = autosave.saving;
 
   savingRealFile = true;
   saveRealFileButton.disabled = true;
+  session.saveError = null;
+  updateRealFileStatus(session);
 
   try {
-    // Step 1: Write to disk only when the document changed.
-    if (needsDiskWrite) {
-      const granted = await session.repository.requestWriteAccess();
-
-      if (!granted) {
-        window.alert('Write permission was not granted. File was not saved.');
-        return false;
-      }
-
-      await session.repository.saveMarkdownNote(
-        session.name,
-        markdownToSave,
-        session.originalContent
-      );
-
-      // Disk write has succeeded.
-      // Update the disk baseline immediately.
-      session.originalContent = markdownToSave;
-    }
-
-    // Step 2: Synchronize the persisted Markdown with Foam Core.
-    try {
-      const updatedResource = workspace.adapter.updateNote(
-        session.uri,
-        markdownToSave
-      );
-
-      // FoamGraph monitors workspace.set() automatically.
-      realCoreSyncNeedsRetry = false;
-
-      console.log('[MVP Real Foam Sync]', {
-        file: session.name,
-        links: updatedResource.links.map(link => link.rawText),
-        graphLinkCount: workspace.graph.getLinks(session.uri).length,
-      });
-    } catch (syncError) {
-      realCoreSyncNeedsRetry = true;
-
-      console.error('[MVP Real Foam Sync] Failed:', syncError);
-
-      const title = document.querySelector<HTMLElement>('.panel-title');
-
-      if (title && realFileSession === session) {
-        title.textContent = hasUnsavedRealChanges()
-          ? `${session.name} * (Not Saved; Core Sync Error)`
-          : `${session.name} (Disk Saved; Core Sync Error)`;
-      }
-
-      window.alert(
-        'The Markdown file was saved to disk, but Foam Core ' +
-          'synchronization failed. Your saved file is preserved. ' +
-          'Please check the Console. You can retry with Save.'
-      );
-
+    if (
+      !alreadySaving &&
+      autosave.dirty &&
+      !(await requestRealFileWriteAccess(session))
+    ) {
       return false;
     }
-
-    // Step 3: Report the final editor state.
-    const stillDirty = hasUnsavedRealChanges();
-
-    const title = document.querySelector<HTMLElement>('.panel-title');
-
-    if (title && realFileSession === session) {
-      title.textContent = stillDirty
-        ? `${session.name} * (Not Saved)`
-        : `${session.name} (Editing)`;
-    }
-
-    console.log('[MVP Real File Saved]', {
-      file: session.name,
-      characters: markdownToSave.length,
-      diskWrittenNow: needsDiskWrite,
-      coreSynced: true,
-      stillDirty,
-    });
-
-    return !stillDirty;
-  } catch (error) {
-    console.error('[MVP Real File Save] Failed:', error);
-
-    window.alert(
-      error instanceof Error ? error.message : 'Failed to save Markdown file.'
+    if (realFileSession !== session) return false;
+    await autosave.flush();
+    return (
+      realFileSession === session &&
+      !hasUnsavedRealChanges() &&
+      !autosave.needsSync
     );
-
+  } catch {
+    // The coordinator reports the failure and retains dirty/Core retry state.
     return false;
   } finally {
     savingRealFile = false;
     saveRealFileButton.disabled = false;
+    updateRealFileStatus(session);
+    resumeRealFileAutosave(session);
   }
 }
 
@@ -492,37 +502,33 @@ function askWorkspaceSwitchDecision(
   return new Promise(resolve => {
     const dialog = document.createElement('dialog');
 
-    dialog.style.cssText = `
-      width: min(440px, 90vw);
-      padding: 24px;
-      border: 1px solid #ccc;
-      border-radius: 10px;
-    `;
+    dialog.className = 'app-dialog unsaved-dialog';
+    dialog.setAttribute('aria-labelledby', 'unsaved-heading');
+    dialog.setAttribute('aria-describedby', 'unsaved-message');
 
     const heading = document.createElement('h3');
     heading.textContent = 'Unsaved Changes';
+    heading.id = 'unsaved-heading';
 
     const message = document.createElement('p');
+    message.id = 'unsaved-message';
     message.textContent =
       'The current Markdown note has unsaved changes. ' +
       `What would you like to do before ${action}?`;
 
     const actions = document.createElement('div');
 
-    actions.style.cssText = `
-      display: flex;
-      gap: 10px;
-      justify-content: flex-end;
-      margin-top: 20px;
-    `;
+    actions.className = 'dialog-actions';
 
     const saveButton = document.createElement('button');
     saveButton.type = 'button';
     saveButton.textContent = 'Save';
+    saveButton.className = 'button-primary';
 
     const discardButton = document.createElement('button');
     discardButton.type = 'button';
     discardButton.textContent = 'Discard';
+    discardButton.className = 'button-destructive';
 
     const cancelButton = document.createElement('button');
     cancelButton.type = 'button';
@@ -592,21 +598,60 @@ const editRealFileButton = document.createElement('button');
 
 editRealFileButton.type = 'button';
 editRealFileButton.textContent = 'Edit Real File';
+editRealFileButton.className = 'button-primary';
 editRealFileButton.style.display = 'none';
-saveRealFileButton.style.display = 'inline-block';
 
-document.querySelector('.topbar')?.appendChild(editRealFileButton);
+document.querySelector('.note-actions')?.appendChild(editRealFileButton);
 
-editRealFileButton.addEventListener('click', () => {
+editRealFileButton.addEventListener('click', async () => {
   const session = realFileSession;
+  const workspace = activeRealWorkspace;
 
-  if (!session || session.editing) {
+  if (
+    !session ||
+    session.editing ||
+    !workspace ||
+    workspace.repository !== session.repository ||
+    openingExplorerFile ||
+    switchingWorkspace ||
+    followingRealWikilink
+  ) {
     return;
   }
 
   const markdown = mainEditor.state.doc.toString();
 
   session.editing = true;
+  const { repository, name, uri } = session;
+  const { adapter } = workspace;
+  session.autosave = new RealNoteAutosave(markdown, {
+    persist: async (snapshot, expectedContent) => {
+      if (realFileSession !== session || activeRealWorkspace !== workspace) {
+        throw new Error('Real-file session is no longer active');
+      }
+      session.saveError = null;
+      updateRealFileStatus(session);
+      if (!session.writeAccess) {
+        throw new Error('Write permission required. Retry with Save.');
+      }
+      await repository.saveMarkdownNote(
+        name,
+        snapshot.content,
+        expectedContent
+      );
+    },
+    synchronize: snapshot => {
+      if (realFileSession !== session || activeRealWorkspace !== workspace) {
+        throw new Error('Real-file session is no longer active');
+      }
+      // FoamGraph monitors workspace.set(); never publish a newer draft here.
+      adapter.updateNote(uri, snapshot.content);
+      session.saveError = null;
+    },
+    onError: error => reportRealFileSaveError(session, error),
+    onStateChange: () => updateRealFileStatus(session),
+  });
+  session.autosave.suspend();
 
   mainEditor.setState(
     EditorState.create({
@@ -619,22 +664,20 @@ editRealFileButton.addEventListener('click', () => {
     })
   );
 
-  const title = document.querySelector<HTMLElement>('.panel-title');
-
-  if (title) {
-    title.textContent = `${session.name} (Editing)`;
-  }
-
   editRealFileButton.style.display = 'none';
   saveRealFileButton.style.display = 'inline-block';
-
-  console.log('[MVP Real File Edit]', {
-    file: session.name,
-    editable: true,
-    savedToDisk: false,
-  });
-
   mainEditor.focus();
+  savingRealFile = true;
+  saveRealFileButton.disabled = true;
+  updateRealFileStatus(session);
+  try {
+    await requestRealFileWriteAccess(session);
+  } finally {
+    savingRealFile = false;
+    saveRealFileButton.disabled = false;
+    updateRealFileStatus(session);
+    resumeRealFileAutosave(session);
+  }
 });
 
 const returnButton = document.createElement('button');
@@ -642,27 +685,34 @@ returnButton.type = 'button';
 returnButton.textContent = 'Return to Sample';
 returnButton.style.display = 'none';
 
-document.querySelector('.topbar')?.appendChild(returnButton);
+document.querySelector('.note-actions')?.appendChild(returnButton);
 
-returnButton.addEventListener('click', () => {
-  if (followingRealWikilink) return;
-  if (savingRealFile) {
+function returnToSample(discardApproved = false): boolean {
+  if (isSavingRealFile()) {
     window.alert('Please wait until saving finishes.');
-    return;
+    return false;
   }
 
   if (!savedSampleState) {
-    return;
+    return false;
+  }
+
+  if (realFileSession?.autosave?.needsSync) {
+    window.alert(
+      'Disk saved, Core sync failed. Retry Save before leaving this note.'
+    );
+    return false;
   }
 
   if (
     hasUnsavedRealChanges() &&
-    !workspaceDiscardApproved &&
+    !discardApproved &&
     !window.confirm('File has unsaved changes. Return without saving?')
   ) {
-    return;
+    return false;
   }
 
+  realFileSession?.autosave?.dispose();
   mainEditor.setState(savedSampleState);
   savedSampleState = null;
   realFileSession = null;
@@ -670,15 +720,18 @@ returnButton.addEventListener('click', () => {
   editRealFileButton.style.display = 'none';
   saveRealFileButton.style.display = 'none';
 
-  const title = document.querySelector<HTMLElement>('.panel-title');
-
-  if (title) {
-    title.textContent = savedSampleTitle;
-  }
+  renderNoteHeader(savedSampleTitle, 'Sample · browser storage');
 
   returnButton.style.display = 'none';
 
   console.log('[MVP Return to Sample] OK');
+  return true;
+}
+
+returnButton.addEventListener('click', () => {
+  if (followingRealWikilink || openingExplorerFile || switchingWorkspace)
+    return;
+  returnToSample();
 });
 
 // Temporary button for testing real file access.
@@ -686,8 +739,10 @@ const fileTestButton = document.createElement('button');
 
 fileTestButton.type = 'button';
 fileTestButton.textContent = 'Open Test Folder';
+fileTestButton.title = 'Developer check: read Welcome.md from a test folder';
+fileTestButton.setAttribute('aria-label', 'Open Test Folder (developer check)');
 
-document.querySelector('.topbar')?.appendChild(fileTestButton);
+document.querySelector('.developer-actions')?.appendChild(fileTestButton);
 
 fileTestButton.addEventListener('click', async () => {
   try {
@@ -712,7 +767,7 @@ let openingExplorerFile = false;
 let explorerRepository: BrowserNoteRepository | null = null;
 
 function canNavigateRealNote(): boolean {
-  if (savingRealFile || openingExplorerFile || switchingWorkspace) {
+  if (isSavingRealFile() || openingExplorerFile || switchingWorkspace) {
     window.alert('Please wait until the current file operation finishes.');
     return false;
   }
@@ -751,6 +806,7 @@ async function openRealWikilink(targetUri: URI): Promise<void> {
 
   openingExplorerFile = true;
   followingRealWikilink = true;
+  session.autosave?.suspend();
   const sourceState = mainEditor.state;
 
   try {
@@ -762,10 +818,10 @@ async function openRealWikilink(targetUri: URI): Promise<void> {
         activeRealWorkspace === workspace &&
         realFileSession === session &&
         mainEditor.state === sourceState &&
-        !savingRealFile &&
+        !isSavingRealFile() &&
         !switchingWorkspace,
       hasUnsavedChanges: hasUnsavedRealChanges,
-      needsSync: () => realCoreSyncNeedsRetry,
+      needsSync: () => session.autosave?.needsSync ?? false,
       askDecision: () => askWorkspaceSwitchDecision('following this Wikilink'),
     });
 
@@ -779,6 +835,7 @@ async function openRealWikilink(targetUri: URI): Promise<void> {
   } finally {
     followingRealWikilink = false;
     openingExplorerFile = false;
+    resumeRealFileAutosave(session);
   }
 }
 
@@ -835,6 +892,7 @@ function renderExplorerFileList(
       fileElement.type = 'button';
       fileElement.className = 'explorer-file';
       fileElement.textContent = `📄 ${note.name}`;
+      fileElement.setAttribute('aria-label', `Open ${note.name}`);
       fileElement.dataset.noteName = note.name;
 
       fileElement.addEventListener('click', async () => {
@@ -846,12 +904,14 @@ function renderExplorerFileList(
           return;
         }
 
-        if (savingRealFile) {
+        if (isSavingRealFile()) {
           window.alert('Please wait until saving finishes.');
           return;
         }
 
         openingExplorerFile = true;
+        const sourceSession = realFileSession;
+        sourceSession?.autosave?.suspend();
 
         try {
           // Always read the latest version from disk.
@@ -876,6 +936,7 @@ function renderExplorerFileList(
           );
         } finally {
           openingExplorerFile = false;
+          resumeRealFileAutosave(sourceSession);
         }
       });
 
@@ -899,9 +960,18 @@ function openRealNoteInEditor(
   wikilinkDecisionApproved = false
 ): boolean {
   if (followingRealWikilink && !wikilinkDecisionApproved) return false;
+  if (switchingWorkspace || activeRealWorkspace?.repository !== repository)
+    return false;
   // Prevent switching notes while saving.
-  if (savingRealFile) {
+  if (isSavingRealFile()) {
     window.alert('Please wait until saving finishes.');
+    return false;
+  }
+
+  if (realFileSession?.autosave?.needsSync) {
+    window.alert(
+      'Disk saved, Core sync failed. Retry Save before leaving this note.'
+    );
     return false;
   }
 
@@ -938,13 +1008,16 @@ function openRealNoteInEditor(
     ],
   });
 
+  realFileSession?.autosave?.dispose();
   mainEditor.setState(previewState);
 
   realFileSession = {
     repository,
     name: selected.name,
     uri: realNoteUri,
-    originalContent: selected.content,
+    autosave: null,
+    writeAccess: false,
+    saveError: null,
     editing: false,
   };
   updateExplorerActiveFile();
@@ -953,9 +1026,7 @@ function openRealNoteInEditor(
   saveRealFileButton.style.display = 'none';
   returnButton.style.display = 'inline-block';
 
-  if (title) {
-    title.textContent = `${selected.name} (Read Only)`;
-  }
+  renderNoteHeader(selected.name, 'Read only · choose Edit Real File to edit');
 
   console.log('[MVP Real Note Opened]', {
     file: selected.name,
@@ -972,12 +1043,13 @@ const listNotesButton = document.createElement('button');
 
 listNotesButton.type = 'button';
 listNotesButton.textContent = 'List Markdown Notes';
+listNotesButton.title = 'Choose a folder and browse its Markdown notes';
 
-document.querySelector('.topbar')?.appendChild(listNotesButton);
+document.querySelector('.workspace-actions')?.appendChild(listNotesButton);
 
 listNotesButton.addEventListener('click', async () => {
   // Prevent changing workspace while saving.
-  if (savingRealFile) {
+  if (isSavingRealFile()) {
     window.alert('Please wait until saving finishes.');
     return;
   }
@@ -993,6 +1065,8 @@ listNotesButton.addEventListener('click', async () => {
   }
 
   switchingWorkspace = true;
+  const sourceSession = realFileSession;
+  sourceSession?.autosave?.suspend();
 
   try {
     const repository = await BrowserNoteRepository.pick();
@@ -1005,7 +1079,7 @@ listNotesButton.addEventListener('click', async () => {
     let notes = await repository.listMarkdownNotes();
 
     // Ensure no other file operation is in progress.
-    if (savingRealFile || openingExplorerFile) {
+    if (isSavingRealFile() || openingExplorerFile) {
       window.alert('Please wait for the current operation to finish.');
       return;
     }
@@ -1014,7 +1088,10 @@ listNotesButton.addEventListener('click', async () => {
 
     // Only prompt after the new folder has been selected
     // and read successfully.
-    if (realFileSession && hasUnsavedRealChanges()) {
+    if (
+      realFileSession &&
+      (hasUnsavedRealChanges() || realFileSession.autosave?.needsSync)
+    ) {
       decision = await askWorkspaceSwitchDecision();
 
       if (decision === 'cancel') {
@@ -1031,6 +1108,15 @@ listNotesButton.addEventListener('click', async () => {
       );
       return;
     }
+
+    if (realFileSession?.autosave?.needsSync) {
+      window.alert(
+        'Disk saved, Core sync failed. Retry Save before leaving this note.'
+      );
+      return;
+    }
+    const sourceState = mainEditor.state;
+    const sourceSnapshot = sourceSession?.autosave?.persistedSnapshot;
 
     // Reload files after a possible Save / Discard decision.
     // This also handles selecting the same folder again.
@@ -1049,6 +1135,19 @@ listNotesButton.addEventListener('click', async () => {
       true
     );
 
+    if (
+      realFileSession !== sourceSession ||
+      mainEditor.state !== sourceState ||
+      sourceSession?.autosave?.persistedSnapshot !== sourceSnapshot
+    ) {
+      nextRealFoamGraph.dispose();
+      nextRealFoamAdapter.workspace.dispose();
+      window.alert(
+        'The current note changed. Workspace switching was cancelled.'
+      );
+      return;
+    }
+
     console.log('[MVP Real Graph Prepared]', {
       folder: repository.folderName,
       graphReady: true,
@@ -1061,15 +1160,9 @@ listNotesButton.addEventListener('click', async () => {
 
     // Restore Sample before rendering the new workspace.
     if (realFileSession) {
-      workspaceDiscardApproved = decision === 'discard';
-
-      try {
-        returnButton.click();
-      } finally {
-        workspaceDiscardApproved = false;
-      }
-
-      if (realFileSession) {
+      if (!returnToSample(decision === 'discard')) {
+        nextRealFoamGraph.dispose();
+        nextRealFoamAdapter.workspace.dispose();
         throw new Error(
           'Could not close the current note before switching workspace.'
         );
@@ -1088,7 +1181,6 @@ listNotesButton.addEventListener('click', async () => {
       adapter: nextRealFoamAdapter,
       graph: nextRealFoamGraph,
     };
-    realCoreSyncNeedsRetry = false;
 
     // Dispose the previous workspace only after the new
     // workspace has been activated successfully.
@@ -1169,25 +1261,16 @@ listNotesButton.addEventListener('click', async () => {
 
     dialog.id = 'mvp-note-preview';
 
-    dialog.style.cssText = `
-      width: min(800px, 90vw);
-      max-height: 85vh;
-      padding: 20px;
-      border: 1px solid #aaa;
-      border-radius: 10px;
-    `;
+    dialog.className = 'app-dialog note-picker';
+    dialog.setAttribute('aria-labelledby', 'note-picker-heading');
 
     const heading = document.createElement('h3');
     heading.textContent = `Markdown files - ${repository.folderName}`;
+    heading.id = 'note-picker-heading';
 
     const select = document.createElement('select');
 
-    select.style.cssText = `
-      display: block;
-      width: 100%;
-      margin: 12px 0;
-      padding: 8px;
-    `;
+    select.setAttribute('aria-label', 'Markdown file');
 
     for (const note of notes) {
       const option = document.createElement('option');
@@ -1201,13 +1284,7 @@ listNotesButton.addEventListener('click', async () => {
     preview.readOnly = true;
     preview.rows = 15;
 
-    preview.style.cssText = `
-      width: 100%;
-      box-sizing: border-box;
-      padding: 12px;
-      font-family: monospace;
-      resize: vertical;
-    `;
+    preview.setAttribute('aria-label', 'Selected Markdown file preview');
 
     const showSelectedNote = () => {
       const selected = notes.find(note => note.name === select.value);
@@ -1227,7 +1304,6 @@ listNotesButton.addEventListener('click', async () => {
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.textContent = 'Close';
-    closeButton.style.marginTop = '12px';
 
     closeButton.addEventListener('click', () => {
       dialog.close();
@@ -1236,9 +1312,10 @@ listNotesButton.addEventListener('click', async () => {
     const openInEditorButton = document.createElement('button');
     openInEditorButton.type = 'button';
     openInEditorButton.textContent = 'Open in CodeMirror';
-    openInEditorButton.style.marginRight = '12px';
+    openInEditorButton.className = 'button-primary picker-open';
 
     openInEditorButton.addEventListener('click', () => {
+      if (openingExplorerFile || switchingWorkspace) return;
       const selected = notes.find(note => note.name === select.value);
 
       if (!selected) {
@@ -1273,11 +1350,16 @@ listNotesButton.addEventListener('click', async () => {
     console.error('[MVP Note List] Failed:', error);
   } finally {
     switchingWorkspace = false;
+    resumeRealFileAutosave(sourceSession);
   }
 });
 
 window.addEventListener('beforeunload', event => {
-  if (savingRealFile || hasUnsavedRealChanges()) {
+  if (
+    isSavingRealFile() ||
+    hasUnsavedRealChanges() ||
+    realFileSession?.autosave?.needsSync
+  ) {
     event.preventDefault();
     event.returnValue = '';
   }
