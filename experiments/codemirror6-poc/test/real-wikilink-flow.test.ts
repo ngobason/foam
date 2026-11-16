@@ -175,6 +175,22 @@ const waitForDialog = async () => {
 };
 
 async function returnToSampleForTest() {
+  const pendingDialog = browser.dialogs.findLast(
+    dialog =>
+      dialog.isConnected &&
+      dialog.children[0]?.textContent === 'Unsaved Changes'
+  );
+  if (pendingDialog) {
+    await pendingDialog.children
+      .at(-1)!
+      .children.find(e => e.textContent === 'Cancel')!
+      .click();
+    await vi.waitFor(() =>
+      expect(
+        editor().state.facet(realLinkNavigationContext)?.canNavigate() ?? true
+      ).toBe(true)
+    );
+  }
   let finished = false;
   const leaving = button('Return to Sample')
     .click()
@@ -217,6 +233,11 @@ async function openWorkspace(
     files.set(name, content);
   });
   const requestPermission = vi.fn(async () => permission);
+  const createWritable = vi.fn(async (name: string) => ({
+    write: (content: string) => write(name, content),
+    close: async () => {},
+    abort: async () => {},
+  }));
   browser.window.showDirectoryPicker.mockResolvedValue({
     name: 'Test workspace',
     requestPermission,
@@ -229,11 +250,7 @@ async function openWorkspace(
       return {
         kind: 'file',
         getFile: async () => ({ text: () => read(name) }),
-        createWritable: async () => ({
-          write: (content: string) => write(name, content),
-          close: async () => {},
-          abort: async () => {},
-        }),
+        createWritable: () => createWritable(name),
       };
     },
   });
@@ -262,6 +279,7 @@ async function openWorkspace(
     state,
     context,
     requestPermission,
+    createWritable,
     adapter: context.adapter!,
   };
 }
@@ -451,13 +469,493 @@ describe('real Wikilink dialog and safe save wiring', () => {
   });
 });
 
-describe.each(['Explorer', 'Sample'])('%s safe fallback', path => {
+const explorerFile = (name: string) =>
+  browser.elements
+    .get('#mvp-file-list')!
+    .children.find(e => e.dataset.noteName === name)!;
+const pickerOpenNote = (name: string) => {
+  const picker = browser.dialogs.findLast(
+    dialog => dialog.id === 'mvp-note-preview'
+  )!;
+  picker.children[1].value = name;
+  return picker.children.find(
+    element => element.textContent === 'Open in CodeMirror'
+  )!;
+};
+
+describe('Explorer automatic save-before-navigation', () => {
+  it('reuses already-granted write access instead of requesting it again', async () => {
+    const { files, requestPermission } = await openWorkspace(false);
+    vi.useFakeTimers();
+    requestPermission.mockClear();
+    editText('Granted draft [[B]]');
+    await explorerFile('B.md').click();
+    expect(files.get('A.md')).toBe('Granted draft [[B]]');
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+  });
+
+  it.each([false, true])(
+    'awaits an in-flight manual Save with newer edits=%s without requesting permission again',
+    async newerEdits => {
+      const { files, write, adapter, requestPermission } = await openWorkspace(
+        false
+      );
+      vi.useFakeTimers();
+      const gate = pendingWrite();
+      write.mockImplementationOnce(async (name, content) => {
+        await gate.promise;
+        files.set(name, content);
+      });
+      editText('Manual snapshot [[B]]');
+      await button('Save Real File').click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(write).toHaveBeenCalledTimes(1);
+      requestPermission.mockClear();
+      if (newerEdits) editText('Newer manual draft [[B]]');
+      const count = browser.dialogs.length;
+      const leaving = explorerFile('B.md').click();
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(requestPermission).not.toHaveBeenCalled();
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(
+          '/real-notes/A.md'
+        );
+      } finally {
+        gate.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+        await leaving;
+      }
+      const content = newerEdits
+        ? 'Newer manual draft [[B]]'
+        : 'Manual snapshot [[B]]';
+      expect(files.get('A.md')).toBe(content);
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(content);
+      expect(write).toHaveBeenCalledTimes(newerEdits ? 2 : 1);
+      expect(requestPermission).not.toHaveBeenCalled();
+      expect(browser.dialogs).toHaveLength(count);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+    }
+  );
+
+  it('retains the source session when the target disappears after successful flush', async () => {
+    const { files, write, adapter } = await openWorkspace(false);
+    vi.useFakeTimers();
+    editText('Saved before target removal [[B]]');
+    const source = editor().state;
+    const count = browser.dialogs.length;
+    write.mockImplementationOnce(async (name, content) => {
+      files.set(name, content);
+      files.delete('B.md');
+    });
+    await explorerFile('B.md').click();
+    expect(editor().state).toBe(source);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    expect(files.get('A.md')).toBe('Saved before target removal [[B]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+      'Saved before target removal [[B]]'
+    );
+    expect(browser.window.alert).toHaveBeenCalledWith('File not found');
+    expect(browser.dialogs).toHaveLength(count);
+    editText('Still editable [[B]]');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(files.get('A.md')).toBe('Still editable [[B]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+      'Still editable [[B]]'
+    );
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(browser.storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('invalidates revoked access, keeps the draft and requires a gesture to retry', async () => {
+    const { files, write, requestPermission, createWritable } =
+      await openWorkspace(false);
+    vi.useFakeTimers();
+    const original = files.get('A.md');
+    editText('Revoked permission draft [[B]]');
+    const source = editor().state;
+    createWritable.mockRejectedValueOnce(
+      new DOMException('Write permission revoked', 'NotAllowedError')
+    );
+    requestPermission.mockClear();
+    requestPermission.mockResolvedValue('denied');
+    const leaving = explorerFile('B.md').click();
+    await vi.advanceTimersByTimeAsync(0);
+    await waitForDialog();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(editor().state).toBe(source);
+    expect(files.get('A.md')).toBe(original);
+    expect(write).not.toHaveBeenCalled();
+    await dialogButton('Cancel').click();
+    await leaving;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(createWritable).toHaveBeenCalledTimes(1);
+    expect(requestPermission).not.toHaveBeenCalled();
+    const retry = explorerFile('B.md').click();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(0);
+    await waitForDialog();
+    expect(editor().state).toBe(source);
+    expect(files.get('A.md')).toBe(original);
+    expect(createWritable).toHaveBeenCalledTimes(1);
+    requestPermission.mockResolvedValue('granted');
+    await dialogButton('Save').click();
+    await retry;
+    expect(requestPermission).toHaveBeenCalledTimes(2);
+    expect(files.get('A.md')).toBe('Revoked permission draft [[B]]');
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+  });
+
+  it('keeps newer edits if permission is revoked during an in-flight manual Save', async () => {
+    const { files, write, adapter, requestPermission, createWritable } =
+      await openWorkspace(false);
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    write.mockImplementationOnce(async (name, content) => {
+      await gate.promise;
+      files.set(name, content);
+    });
+    editText('First manual snapshot [[B]]');
+    await button('Save Real File').click();
+    await vi.advanceTimersByTimeAsync(0);
+    createWritable.mockRejectedValueOnce(
+      new DOMException('Write permission revoked', 'NotAllowedError')
+    );
+    requestPermission.mockClear();
+    editText('Newer revoked draft [[B]]');
+    const leaving = explorerFile('B.md').click();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(requestPermission).not.toHaveBeenCalled();
+      expect(write).toHaveBeenCalledTimes(1);
+    } finally {
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await waitForDialog();
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    expect(editor().state.doc.toString()).toBe('Newer revoked draft [[B]]');
+    expect(files.get('A.md')).toBe('First manual snapshot [[B]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+      'First manual snapshot [[B]]'
+    );
+    expect(requestPermission).not.toHaveBeenCalled();
+    await dialogButton('Save').click();
+    await leaving;
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(files.get('A.md')).toBe('Newer revoked draft [[B]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+      'Newer revoked draft [[B]]'
+    );
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+  });
+
+  it('opens a clean note without permissions, writes or a dialog', async () => {
+    const { requestPermission, write } = await openWorkspace(false);
+    requestPermission.mockClear();
+    const count = browser.dialogs.length;
+    await explorerFile('B.md').click();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(browser.dialogs).toHaveLength(count);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+  });
+
+  it.each(['\r\n', '\n'])(
+    'flushes pending edits preserving %j before opening the target without a dialog',
+    async separator => {
+      const { files, write, adapter, requestPermission } = await openWorkspace(
+        false
+      );
+      files.set('A.md', ['# A', '[[B]]'].join(separator));
+      await explorerFile('A.md').click();
+      await button('Edit Real File').click();
+      requestPermission.mockClear();
+      vi.useFakeTimers();
+      const count = browser.dialogs.length;
+      editText('# A\nLatest [[B]]');
+      const leaving = explorerFile('B.md').click();
+      await vi.advanceTimersByTimeAsync(0);
+      const persisted = ['# A', 'Latest [[B]]'].join(separator);
+      expect(files.get('A.md')).toBe(persisted);
+      expect(write).toHaveBeenCalledExactlyOnceWith('A.md', persisted);
+      expect(requestPermission).not.toHaveBeenCalled();
+      await leaving;
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(persisted);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+      expect(browser.dialogs).toHaveLength(count);
+      expect(browser.storage.setItem).not.toHaveBeenCalled();
+    }
+  );
+
+  it('initiates permission preflight in the click before any target read', async () => {
+    const { requestPermission, read } = await openWorkspace(false, 'denied');
+    const readTarget = vi.spyOn(
+      BrowserNoteRepository.prototype,
+      'readMarkdownNote'
+    );
+    vi.useFakeTimers();
+    editText('Pending [[B]]');
+    const permission = pendingWrite();
+    requestPermission.mockClear();
+    read.mockClear();
+    requestPermission.mockImplementationOnce(async () => {
+      await permission.promise;
+      return 'granted';
+    });
+    const leaving = explorerFile('B.md').click();
+    try {
+      expect(requestPermission).toHaveBeenCalledTimes(1);
+      expect(readTarget).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      permission.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await leaving;
+  });
+
+  it.each(['Cancel', 'Save'])(
+    'uses fallback on permission denial and supports %s without background permission requests',
+    async decision => {
+      const { files, write, requestPermission } = await openWorkspace(
+        false,
+        'denied'
+      );
+      vi.useFakeTimers();
+      const original = files.get('A.md');
+      editText('Permission draft [[B]]');
+      requestPermission.mockResolvedValue('denied');
+      const source = editor().state;
+      const leaving = explorerFile('B.md').click();
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(editor().state).toBe(source);
+      expect(files.get('A.md')).toBe(original);
+      expect(write).not.toHaveBeenCalled();
+      expect(requestPermission).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(requestPermission).toHaveBeenCalledTimes(2);
+      requestPermission.mockResolvedValue('granted');
+      await dialogButton(decision).click();
+      await leaving;
+      if (decision === 'Cancel') {
+        expect(editor().state).toBe(source);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(requestPermission).toHaveBeenCalledTimes(2);
+        expect(write).not.toHaveBeenCalled();
+        await button('Save Real File').click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(editor().state).toBe(source);
+      } else
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(
+          '/real-notes/B.md'
+        );
+      expect(files.get('A.md')).toBe('Permission draft [[B]]');
+      expect(requestPermission).toHaveBeenCalledTimes(3);
+    }
+  );
+
+  it.each(['Cancel', 'Discard'])(
+    'preserves external disk changes and requires explicit %s in fallback',
+    async decision => {
+      const { files, write } = await openWorkspace(false);
+      vi.useFakeTimers();
+      editText('Conflict draft [[B]]');
+      files.set('A.md', 'External A');
+      const source = editor().state;
+      const leaving = explorerFile('B.md').click();
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(files.get('A.md')).toBe('External A');
+      expect(editor().state).toBe(source);
+      expect(write).not.toHaveBeenCalled();
+      await dialogButton(decision).click();
+      await leaving;
+      expect(files.get('A.md')).toBe('External A');
+      expect(write).not.toHaveBeenCalled();
+      if (decision === 'Cancel') expect(editor().state).toBe(source);
+      else
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(
+          '/real-notes/B.md'
+        );
+    }
+  );
+
+  it.each(['Cancel', 'Save'])(
+    'keeps the draft on I/O failure and allows %s',
+    async decision => {
+      const { files, write } = await openWorkspace(false);
+      vi.useFakeTimers();
+      const original = files.get('A.md');
+      editText('I/O draft [[B]]');
+      write.mockRejectedValueOnce(new Error('Disk write failed'));
+      const source = editor().state;
+      const leaving = explorerFile('B.md').click();
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(files.get('A.md')).toBe(original);
+      expect(editor().state).toBe(source);
+      await dialogButton(decision).click();
+      await leaving;
+      if (decision === 'Save') {
+        expect(write).toHaveBeenCalledTimes(2);
+        expect(files.get('A.md')).toBe('I/O draft [[B]]');
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(
+          '/real-notes/B.md'
+        );
+      } else {
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(editor().state).toBe(source);
+      }
+    }
+  );
+
+  it('keeps Core-only failure in fallback and retries sync without rewriting disk or requesting permission', async () => {
+    const { files, write, adapter, requestPermission } = await openWorkspace(
+      false
+    );
+    vi.useFakeTimers();
+    vi.spyOn(adapter, 'updateNote')
+      .mockImplementationOnce(() => {
+        throw new Error('Core unavailable');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('Core still unavailable');
+      });
+    editText('Persisted [[B]]');
+    await vi.advanceTimersByTimeAsync(750);
+    const source = editor().state;
+    requestPermission.mockClear();
+    const leaving = explorerFile('B.md').click();
+    await vi.advanceTimersByTimeAsync(0);
+    await waitForDialog();
+    expect(editor().state).toBe(source);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(requestPermission).not.toHaveBeenCalled();
+    await dialogButton('Save').click();
+    await leaving;
+    expect(files.get('A.md')).toBe('Persisted [[B]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+      'Persisted [[B]]'
+    );
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+  });
+
+  it('drains an in-flight snapshot and newer edits before navigating without double writes', async () => {
+    const { files, write, adapter } = await openWorkspace(false);
+    vi.useFakeTimers();
+    const first = pendingWrite();
+    const second = pendingWrite();
+    write.mockImplementationOnce(async (name, content) => {
+      await first.promise;
+      files.set(name, content);
+    });
+    write.mockImplementationOnce(async (name, content) => {
+      await second.promise;
+      files.set(name, content);
+    });
+    editText('B [[B]]');
+    await vi.advanceTimersByTimeAsync(750);
+    editText('C [[B]]');
+    const leaving = explorerFile('B.md').click();
+    await vi.advanceTimersByTimeAsync(0);
+    editText('D [[B]]');
+    try {
+      expect(write).toHaveBeenCalledTimes(1);
+      first.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(files.get('A.md')).toBe('B [[B]]');
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe('B [[B]]');
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    } finally {
+      first.resolve();
+      second.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await leaving;
+    expect(files.get('A.md')).toBe('D [[B]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe('D [[B]]');
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+  });
+
+  it('rejects a target read made stale by newer edits after automatic persistence', async () => {
+    const { files, read } = await openWorkspace(false);
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    let targetReads = 0;
+    const readFile = read.getMockImplementation()!;
+    read.mockImplementation(async name => {
+      if (name === 'B.md' && ++targetReads === 2) await gate.promise;
+      return readFile(name);
+    });
+    editText('Before target read [[B]]');
+    const leaving = explorerFile('B.md').click();
+    await vi.advanceTimersByTimeAsync(0);
+    try {
+      expect(files.get('A.md')).toBe('Before target read [[B]]');
+      editText('Newer draft [[B]]');
+    } finally {
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await leaving;
+    expect(editor().state.doc.toString()).toBe('Newer draft [[B]]');
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(files.get('A.md')).toBe('Newer draft [[B]]');
+  });
+
+  it('offers fallback for newer edits when an in-flight disk write fails', async () => {
+    const { files, write } = await openWorkspace(false);
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    write.mockImplementationOnce(async () => {
+      await gate.promise;
+      throw new Error('Disk write failed');
+    });
+    editText('B [[B]]');
+    await vi.advanceTimersByTimeAsync(750);
+    const leaving = explorerFile('B.md').click();
+    await vi.advanceTimersByTimeAsync(0);
+    editText('Newer C [[B]]');
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await waitForDialog();
+    expect(editor().state.doc.toString()).toBe('Newer C [[B]]');
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    await dialogButton('Save').click();
+    await leaving;
+    expect(files.get('A.md')).toBe('Newer C [[B]]');
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+  });
+
+  it('navigates from a mixed-line-ending read-only note without permissions or writes', async () => {
+    const { files, write, requestPermission } = await openWorkspace(false);
+    files.set('B.md', '# B\r\nMixed\nEnd');
+    await explorerFile('B.md').click();
+    expect(button('Edit Real File').style.display).toBe('none');
+    requestPermission.mockClear();
+    await explorerFile('A.md').click();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(files.get('B.md')).toBe('# B\r\nMixed\nEnd');
+  });
+});
+
+describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
   const navigationButton = () =>
-    path === 'Sample'
-      ? button('Return to Sample')
-      : browser.elements
-          .get('#mvp-file-list')!
-          .children.find(e => e.dataset.noteName === 'B.md')!;
+    path === 'Sample' ? button('Return to Sample') : pickerOpenNote('B.md');
 
   it('navigates clean notes without a dialog or a write', async () => {
     const { write } = await openWorkspace(false);
@@ -600,7 +1098,7 @@ describe.each(['Explorer', 'Sample'])('%s safe fallback', path => {
   });
 });
 
-describe('Explorer target preparation', () => {
+describe('Note target preparation', () => {
   it('keeps newer edits when the source changes during the target read', async () => {
     const { read, files } = await openWorkspace(false);
     vi.useFakeTimers();
@@ -631,10 +1129,7 @@ describe('Explorer target preparation', () => {
     const original = files.get('A.md');
     editText('Keep this draft [[B]]');
     const source = editor().state;
-    const leaving = browser.elements
-      .get('#mvp-file-list')!
-      .children.find(e => e.dataset.noteName === 'B.md')!
-      .click();
+    const leaving = pickerOpenNote('B.md').click();
     await vi.advanceTimersByTimeAsync(0);
     await waitForDialog();
     files.delete('B.md');
@@ -1067,7 +1562,7 @@ describe('real-file auto-save integration', () => {
     );
   });
 
-  it.each(['Wikilink', 'Explorer', 'Workspace', 'Sample'])(
+  it.each(['Wikilink', 'Picker', 'Workspace', 'Sample'])(
     'blocks %s departure during an in-flight save',
     async path => {
       const { files, write, context } = await openWorkspace(false);
@@ -1081,11 +1576,7 @@ describe('real-file auto-save integration', () => {
       await vi.advanceTimersByTimeAsync(750);
       const source = editor().state;
       if (path === 'Wikilink') context.openNote(URI.file('/real-notes/B.md'));
-      if (path === 'Explorer')
-        await browser.elements
-          .get('#mvp-file-list')!
-          .children.find(e => e.dataset.noteName === 'B.md')!
-          .click();
+      if (path === 'Picker') await pickerOpenNote('B.md').click();
       if (path === 'Workspace') await button('List Markdown Notes').click();
       if (path === 'Sample') await button('Return to Sample').click();
       await vi.advanceTimersByTimeAsync(0);
@@ -1100,7 +1591,7 @@ describe('real-file auto-save integration', () => {
     }
   );
 
-  it.each(['Wikilink', 'Explorer', 'Workspace', 'Sample'])(
+  it.each(['Wikilink', 'Picker', 'Workspace', 'Sample'])(
     '%s departure cancels a pending timer only after explicit discard',
     async path => {
       const { files, write, context } = await openWorkspace(false);
@@ -1111,12 +1602,8 @@ describe('real-file auto-save integration', () => {
       if (path === 'Wikilink') context.openNote(URI.file('/real-notes/B.md'));
       else if (path === 'Workspace')
         leaving = button('List Markdown Notes').click();
-      else if (path === 'Explorer') {
-        leaving = browser.elements
-          .get('#mvp-file-list')!
-          .children.find(e => e.dataset.noteName === 'B.md')!
-          .click();
-      } else leaving = button('Return to Sample').click();
+      else if (path === 'Picker') leaving = pickerOpenNote('B.md').click();
+      else leaving = button('Return to Sample').click();
       await vi.advanceTimersByTimeAsync(0);
       await waitForDialog();
       await vi.advanceTimersByTimeAsync(1000);
@@ -1194,10 +1681,7 @@ describe('real-file auto-save integration', () => {
     vi.useFakeTimers();
     const original = files.get('A.md');
     editText('Old session draft');
-    const leaving = browser.elements
-      .get('#mvp-file-list')!
-      .children.find(e => e.dataset.noteName === 'B.md')!
-      .click();
+    const leaving = pickerOpenNote('B.md').click();
     await vi.advanceTimersByTimeAsync(0);
     await waitForDialog();
     await dialogButton('Discard').click();

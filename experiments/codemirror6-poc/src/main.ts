@@ -35,6 +35,7 @@ import { readWelcomeFromDisk } from './file-system-smoke';
 import { BrowserNoteRepository } from './browser-note-repository';
 import { FoamCoreAdapter } from './foam-core-adapter';
 import { RealNoteAutosave } from './real-note-autosave';
+import { prepareRealNoteNavigationWithAutoSave } from './real-note-navigation-controller';
 import {
   prepareRealNoteNavigation,
   type NoteSwitchDecision,
@@ -425,7 +426,7 @@ function reportRealFileSaveError(
   );
 }
 
-// Call only from an Edit or Save click, never from an auto-save callback.
+// Call only from an Edit, Save or Explorer click, never from a timer.
 async function requestRealFileWriteAccess(
   session: RealFileSession
 ): Promise<boolean> {
@@ -658,11 +659,19 @@ editRealFileButton.addEventListener('click', async () => {
       if (!session.writeAccess) {
         throw new Error('Write permission required. Retry with Save.');
       }
-      await repository.saveMarkdownNote(
-        name,
-        snapshot.content,
-        expectedContent
-      );
+      try {
+        await repository.saveMarkdownNote(
+          name,
+          snapshot.content,
+          expectedContent
+        );
+      } catch (error) {
+        // Cached access is only a hint: the filesystem enforces revocation.
+        // A later Explorer/Save click must request fresh access, never a timer.
+        if (error instanceof DOMException && error.name === 'NotAllowedError')
+          session.writeAccess = false;
+        throw error;
+      }
     },
     synchronize: snapshot => {
       if (realFileSession !== session || activeRealWorkspace !== workspace) {
@@ -914,32 +923,77 @@ function updateExplorerActiveFile(): void {
 
 async function openExplorerNote(
   repository: BrowserNoteRepository,
-  name: string
+  name: string,
+  automaticSave = false
 ): Promise<boolean> {
   if (switchingWorkspace || openingExplorerFile) return false;
-  if (isSavingRealFile()) {
+  if (
+    isSavingRealFile() &&
+    (!automaticSave || !realFileSession?.autosave?.saving)
+  ) {
     window.alert('Please wait until saving finishes.');
     return false;
   }
   const workspace = activeRealWorkspace;
   if (workspace?.repository !== repository) return false;
   const session = realFileSession;
-  const sourceState = mainEditor.state;
+  let sourceState = mainEditor.state;
   openingExplorerFile = true;
   session?.autosave?.suspend();
   try {
-    const latestNote = await prepareRealNoteNavigation({
+    const navigation = {
       readTarget: () => repository.readMarkdownNote(name),
       isCurrent: () =>
         realFileSession === session &&
         activeRealWorkspace === workspace &&
         mainEditor.state === sourceState &&
-        !isSavingRealFile() &&
+        (automaticSave || !isSavingRealFile()) &&
         !switchingWorkspace,
       hasUnsavedChanges: hasUnsavedRealChanges,
       needsSync: () => session?.autosave?.needsSync ?? false,
       askDecision: () => askWorkspaceSwitchDecision('opening this note'),
-    });
+    };
+    const latestNote = automaticSave
+      ? await prepareRealNoteNavigationWithAutoSave({
+          ...navigation,
+          isSaving: isSavingRealFile,
+          preflightWriteAccess: () =>
+            session?.editing && session.autosave
+              ? session.writeAccess
+                ? Promise.resolve(true)
+                : requestRealFileWriteAccess(session)
+              : Promise.resolve(false),
+          flush: async () => {
+            const autosave = session?.autosave;
+            if (!session?.editing || !autosave) return false;
+            autosave.request(
+              mainEditor.state.doc.sliceString(
+                0,
+                undefined,
+                session.lineSeparator
+              )
+            );
+            let saved = true;
+            try {
+              await autosave.flush();
+            } catch {
+              saved = false;
+            }
+            if (
+              realFileSession !== session ||
+              activeRealWorkspace !== workspace ||
+              mainEditor.state.facet(noteUriFacet)?.toString() !==
+                session.uri.toString() ||
+              isSavingRealFile()
+            )
+              return false;
+            // Checkpoint edits made during our flush. Success requires them persisted;
+            // on failure the shared fallback must ask about this newer draft instead.
+            sourceState = mainEditor.state;
+            return saved && !hasUnsavedRealChanges() && !autosave.needsSync;
+          },
+        })
+      : await prepareRealNoteNavigation(navigation);
     if (!latestNote) return false;
     const opened = openRealNoteInEditor(repository, latestNote, true);
     if (opened) {
@@ -994,7 +1048,7 @@ function renderExplorerFileList(
       fileElement.dataset.noteName = note.name;
 
       fileElement.addEventListener('click', async () => {
-        await openExplorerNote(repository, note.name);
+        await openExplorerNote(repository, note.name, true);
       });
 
       elements.push(fileElement);
