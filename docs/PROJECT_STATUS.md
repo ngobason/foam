@@ -1,31 +1,34 @@
-# FOAM EDITOR — PROJECT STATUS V3
+# FOAM EDITOR — PROJECT STATUS V3.1
 
 **Cập nhật định hướng:** 15/11/2026.
 **Cập nhật checkpoint M1.2 + UX-01:** 16/11/2026.
 **Cập nhật M1.2b-GATE:** 16/11/2026 — accepted with documented limitations, committed tại `bd0e6e71`.
-**Cập nhật M1.3-T1:** 16/11/2026 — implementation và browser acceptance PASS, chờ Git checkpoint.
-**Phiên bản tài liệu:** V3 — Obsidian-like Editing / Views / Workspace.
+**Cập nhật M1.3-T1:** 16/11/2026 — implementation và browser acceptance PASS, committed tại `829d2569`.
+**Cập nhật V3.1:** 16/11/2026 — Web-first, minimal reuse boundary và Architecture Gate.
+**Phiên bản tài liệu:** V3.1 — Obsidian-like Editing / Views / Workspace.
 **Bằng chứng:** HEAD và staging đã được kiểm tra bằng Git local trong lần cập nhật này. Kết quả automated dưới đây là **Codex-reported**; browser/UI là **user-confirmed** trong phạm vi được nêu. Không chạy lại test/build hoặc browser trong lần cập nhật tài liệu này; **M1 chưa hoàn tất**.
 
 ## 1. Quyết định phạm vi mới
 
-- **KEEP:** CodeMirror 6 Markdown editor; Live Preview; Source Mode; Reading View; tabs/panes; Foam Core Wikilinks, Navigation, Autocomplete, Backlinks, Graph, workspace; safe real-file editing and Auto-save; Web-first, Electron-ready.
-- **DROP:** PDF nhiều tài liệu, OCR/AI ingestion, pháp lý/quy định, typed legal relations và các dashboard hiệu lực. Các roadmap tháng 10 chỉ còn là lịch sử tham khảo.
+- **KEEP:** Obsidian-like Markdown editor dùng CodeMirror 6 và Foam Core; ưu tiên Live Preview, Source Mode, Reading View, Markdown fidelity, Wikilinks, Backlinks, Graph và editor UX; tabs/panes, Autocomplete, workspace, safe real-file editing và Auto-save theo roadmap. **Web là nền tảng phát triển/nghiệm thu chính**; Electron chỉ là integration target tương lai, không phải yêu cầu implementation hiện tại. Giữ modularity/host boundary/API tối thiểu để reuse; nhóm khác có thể đảm nhiệm final application integration.
+- **DROP:** PDF nhiều tài liệu, OCR/AI ingestion, pháp lý/quy định, typed legal relations, dashboard hiệu lực, cloud sync, code-server, SDK lớn, plugin ecosystem và nhiều framework-specific adapters. Các roadmap tháng 10 chỉ còn là lịch sử tham khảo.
 - **Generic Markdown YAML Properties** là UI ghi chú bình thường, vẫn được xem xét ở M5.5.
 - Tài liệu chi tiết: [PRODUCT_PLAN.md](PRODUCT_PLAN.md), [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md), [OBSIDIAN_FEATURE_MATRIX.md](OBSIDIAN_FEATURE_MATRIX.md), [QA_ACCEPTANCE.md](QA_ACCEPTANCE.md).
 
 ## 2. Git checkpoint — lịch sử và trạng thái hiện tại
 
-| Mốc                            | Hash/nhánh                                           | Bằng chứng & lưu ý                                                                                            |
-| ------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **M0 application-code**        | `f9852324` / `dev/codemirror6-poc`                   | Save/Discard/Cancel + conflict + real navigation, người dùng xác nhận test/commit/push                        |
-| **M1.0 shared docs**           | `83ceb94c` / `dev/codemirror6-poc`                   | User chạy `git status` và `git log` xác nhận local/upstream cùng hash tại thời điểm báo                       |
-| **V3 documentation**           | `5ec65eec` / `dev/codemirror6-poc`                   | Checkpoint AGENTS và bộ docs V3 trước commit application code                                                 |
-| **M1.2a/b + UX-01**            | `1ed65d89` / `dev/codemirror6-poc`                   | Sáu file application code/test ở §5 đã commit cùng status, sau trạng thái staged trong báo cáo trước          |
-| **M1.2b-GATE + FIX-01/FIX-02** | `bd0e6e71` / `dev/codemirror6-poc`                   | HEAD hiện tại; Auto-save accepted with documented limitations, thay cho trạng thái chờ commit ở báo cáo trước |
-| **M1.3-T1**                    | **chưa commit tại thời điểm lập báo cáo 16/11/2026** | Implementation và browser B1–B5 PASS; ba file code/test ở §5 đang chờ checkpoint, chưa có hash mới            |
+| Mốc                            | Hash/nhánh                         | Bằng chứng & lưu ý                                                                                                  |
+| ------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **M0 application-code**        | `f9852324` / `dev/codemirror6-poc` | Save/Discard/Cancel + conflict + real navigation, người dùng xác nhận test/commit/push                              |
+| **M1.0 shared docs**           | `83ceb94c` / `dev/codemirror6-poc` | User chạy `git status` và `git log` xác nhận local/upstream cùng hash tại thời điểm báo                             |
+| **V3 documentation**           | `5ec65eec` / `dev/codemirror6-poc` | Checkpoint AGENTS và bộ docs V3 trước commit application code                                                       |
+| **M1.2a/b + UX-01**            | `1ed65d89` / `dev/codemirror6-poc` | Sáu file application code/test ở §5 đã commit cùng status, sau trạng thái staged trong báo cáo trước                |
+| **M1.2b-GATE + FIX-01/FIX-02** | `bd0e6e71` / `dev/codemirror6-poc` | Auto-save accepted with documented limitations, thay cho trạng thái chờ commit ở báo cáo trước                      |
+| **M1.3-T1**                    | `829d2569` / `dev/codemirror6-poc` | HEAD hiện tại; shared navigation fallback committed, browser B1–B5 user-confirmed PASS, 99/99 Vitest Codex-reported |
 
-**Lưu ý:** Last committed HEAD là `bd0e6e71`; chỉ M1.3-T1 đang chờ Git checkpoint. **Toàn bộ M1 và M1.3 chưa hoàn tất.** Giữ nguyên mọi thay đổi local và staging; không tự reset/stash/clean. `.vscode/launch.json` được người dùng cố ý sửa local; **không chạm, không stage, không revert**. Lần cập nhật này chỉ sửa `docs/PROJECT_STATUS.md`, không stage/commit/push.
+**Lưu ý:** Last committed HEAD được Git xác nhận là **`829d2569`**. **Toàn bộ M1 và M1.3 chưa hoàn tất.** Giữ nguyên mọi thay đổi local và staging; không tự reset/stash/clean. `.vscode/launch.json` được người dùng cố ý sửa local; **không chạm, không stage, không revert**. Lần cập nhật V3.1 chỉ sửa AGENTS và năm docs dự án, không sửa application/test, không stage/commit/push.
+
+**Baseline và mã local:** **M1.3-T2a là NEXT / NOT IMPLEMENTED tại checkpoint được xác nhận `829d2569`**. Working tree hiện có implementation T2a chưa commit/chưa được nghiệm thu: `src/main.ts`, `test/real-wikilink-flow.test.ts` và file mới `src/real-note-navigation-controller.ts` dưới experiment. Giữ nguyên mã này, đối chiếu/review trước nhiệm vụ tiếp theo; không tự ghi đè, làm lại hoặc coi mã local là checkpoint DONE. T2.1 design audit hoàn tất read-only không phải bằng chứng functionality đã triển khai/nghiệm thu.
 
 ## 3. Tính năng đã hoàn tất theo bằng chứng lịch sử
 
@@ -62,7 +65,7 @@
 - **AS-18:** sample/localStorage isolation chủ yếu là bằng chứng **automated**.
 - **Node 22:** chưa được xác minh; kết quả Node 24.21.0 không thay thế kiểm tra compatibility này.
 
-**M1.3-T1 — safe navigation fallback hoàn tất trong phạm vi T1, chờ Git checkpoint:** Explorer và Return to Sample dùng chung policy Save/Discard/Cancel qua `prepareRealNoteNavigation()` và dialog hiện có. Clean navigation không cần dialog. Save chờ flush và persistence an toàn trước khi chuyển; Save failure/conflict/permission failure giữ draft, chặn navigation và cho retry/Cancel. Cancel giữ note và resume Auto-save phù hợp; Discard chỉ áp dụng sau lựa chọn rõ ràng và khi target vẫn hợp lệ. Source-session/workspace/editor identity guards được kiểm tra lại sau async operations; không dispose source khi disk write in-flight. Wikilink, workspace switching, Core sync, conflict guard, line endings và sample/localStorage isolation được bảo toàn.
+**M1.3-T1 — safe navigation fallback hoàn tất trong phạm vi T1, committed tại `829d2569`:** Explorer và Return to Sample dùng chung policy Save/Discard/Cancel qua `prepareRealNoteNavigation()` và dialog hiện có. Clean navigation không cần dialog. Save chờ flush và persistence an toàn trước khi chuyển; Save failure/conflict/permission failure giữ draft, chặn navigation và cho retry/Cancel. Cancel giữ note và resume Auto-save phù hợp; Discard chỉ áp dụng sau lựa chọn rõ ràng và khi target vẫn hợp lệ. Source-session/workspace/editor identity guards được kiểm tra lại sau async operations; không dispose source khi disk write in-flight. Wikilink, workspace switching, Core sync, conflict guard, line endings và sample/localStorage isolation được bảo toàn.
 
 **M1.3-T1 acceptance:** browser **B1–B5 user-confirmed PASS**; Copilot independent review **PASS WITH MINOR ISSUES**. Codex-reported validation: focused **91/91 PASS**, full PoC **99/99 Vitest PASS**, build/Prettier/whitespace PASS trên **Node 24.21.0**. Không chạy lại test/build/browser trong lần cập nhật docs này. Browser in-flight race tests **chưa được tái hiện độc lập**; automated regressions cung cấp bằng chứng cho các trường hợp write đang chạy, stale source và delayed target reads. Không coi B1–B5 là bằng chứng cho mọi async race trên browser.
 
@@ -81,7 +84,7 @@ Dưới `experiments/codemirror6-poc/`:
 
 **FIX-01/FIX-02 đã commit tại `bd0e6e71`:** `src/main.ts` và `test/real-wikilink-flow.test.ts`, cùng status nghiệm thu.
 
-**M1.3-T1 tại thời điểm trước Git checkpoint:** `src/main.ts`, `src/real-note-navigation.ts` và `test/real-wikilink-flow.test.ts`; giữ nguyên code/test và staging cho checkpoint tiếp theo.
+**M1.3-T1 đã commit tại `829d2569`:** `src/main.ts`, `src/real-note-navigation.ts` và `test/real-wikilink-flow.test.ts`. Thay đổi T2a local chưa commit được liệt kê riêng ở §2; không nhập vào bằng chứng nghiệm thu T1.
 
 **Module liên quan, ngoài sáu file checkpoint:**
 
@@ -92,7 +95,7 @@ Dưới `experiments/codemirror6-poc/`:
 
 ## 6. Những giới hạn đã biết hoặc chưa xác minh
 
-- Sau T1, dirty/pending navigation vẫn cần lựa chọn Save/Discard/Cancel; khi disk write đang chạy vẫn chặn điều hướng. Safe automatic save-before-navigation thuộc M1.3-T2, chưa triển khai. History và cursor/scroll restoration cũng chưa thuộc phạm vi đã hoàn tất.
+- Tại baseline T1 `829d2569`, dirty/pending navigation vẫn cần lựa chọn Save/Discard/Cancel; khi disk write đang chạy vẫn chặn điều hướng. Safe automatic save-before-navigation thuộc M1.3-T2, chưa triển khai tại baseline; mã T2a local chưa được nghiệm thu (§2). History và cursor/scroll restoration cũng chưa thuộc phạm vi đã hoàn tất.
 - `beforeunload` chỉ cảnh báo, không thể bảo đảm asynchronous save khi đóng tab.
 - Browser repository theo báo cáo xử lý file `.md` sẵn có ở folder được chọn, chưa full nested traversal/CRUD.
 - Live Preview có một số extension nhưng không có nghiệm thu Source Mode/Reading View đúng semantics Obsidian; việc có Preview/Edit không đồng nghĩa ba chế độ đã đạt.
@@ -104,13 +107,15 @@ Dưới `experiments/codemirror6-poc/`:
 
 ## 7. Immediate next action
 
-**Hiện tại:** M1.2b-GATE đã commit tại `bd0e6e71`; M1.3-T1 đã implementation + browser B1–B5 PASS và chờ Git checkpoint, chỉ stage/commit khi người dùng cho phép. Không tạo hoặc suy diễn hash mới.
+**Hiện tại:** M1.2b-GATE đã commit tại `bd0e6e71`; M1.3-T1 đã commit tại **`829d2569`**, browser B1–B5 user-confirmed PASS. **M1.3-T2.1 design audit đã hoàn tất read-only**; không coi audit là implementation.
 
-**Next after Git checkpoint: M1.3-T2 — safe automatic save-before-navigation.** M1.3-T2/T3/T4 đều **NOT STARTED**; **overall M1.3 và M1 chưa hoàn tất**. M1.4 (recovery/conflict hardening), M1.5 (stabilization) và M2 cũng chưa bắt đầu. Tiếp tục từng bước được duyệt theo roadmap và các giới hạn ở §4; không bắt đầu M2 trước khi M1 ổn định và được nghiệm thu. Nếu phát hiện lỗi data safety, bảo vệ draft rồi sửa focused trước khi mở rộng; UX-02a vẫn chỉ là backlog M2/M3.
+**Exact next implementation task: M1.3-T2a — safe automatic save-before-navigation cho Explorer ONLY.** Trạng thái tại baseline: **NEXT / NOT IMPLEMENTED**. Đối chiếu implementation local chưa commit ở §2 trước khi tiếp tục, không làm lại/ghi đè hoặc tự xác nhận acceptance. Scope T2a: permission preflight trong original user gesture trước async target reads, flush latest revision qua coordinator, xác nhận disk/Core an toàn rồi navigate; lỗi dùng fallback T1. Không mở rộng tự động sang Wikilink, Return to Sample hoặc workspace switching trong bước này.
+
+M1.3-T2b/T2c, T3/T4, M1.4 (recovery/conflict hardening), M1.5 (stabilization) và M2–M8 **chưa hoàn tất**; **overall M1.3 và M1 NOT DONE**. Sau M1.5, qua **Architecture Gate nhẹ trước M2**: kiểm tra Editor/Session/Core/Repository/Host boundaries, document/persistence ownership, minimal module extraction/host API và focused tests; không mở dự án SDK/Electron. Tiếp tục từng bước được duyệt theo roadmap và giới hạn §4. Nếu phát hiện lỗi data safety, bảo vệ draft rồi sửa focused trước khi mở rộng; UX-02a vẫn chỉ là backlog M2/M3. Task cập nhật docs này không bắt đầu T2a hoặc cleanup code.
 
 ## 8. Quy tắc cập nhật docs / Git tại checkpoint
 
-1. Bộ năm docs V3 và AGENTS đã được cập nhật ở `5ec65eec`; không cần copy lại. PDF/legal ngoài scope; giữ nguyên các rule upstream và bằng chứng lịch sử.
+1. Bộ năm docs V3 và AGENTS đã được cập nhật ở `5ec65eec`; V3.1 đồng bộ tiếp phạm vi và checkpoint `829d2569`, không xóa lịch sử. PDF/legal/cloud sync/code-server/SDK lớn ngoài scope; giữ nguyên các rule upstream và bằng chứng lịch sử. Cleanup là một phần Definition of Done theo roadmap/QA: chỉ xóa sau kiểm tra references và regression safety, giữ tests hữu ích/Core đang dùng, affected tests/build/review PASS, tránh unrelated refactoring.
 2. Trước checkpoint tiếp theo, kiểm tra read-only HEAD, `git status -sb`, staged diff và docs diff; không ghi đè code/test đang staged hoặc thay đổi local khác.
 3. Giữ các bảo vệ dữ liệu: expected-content conflict guard, persisted baseline, Core/Graph chỉ nhận persisted snapshots, draft mới hơn khi save in-flight, Save/Discard/Cancel và sample/localStorage isolation. `beforeunload` không bảo đảm async save khi đóng trang.
 4. Không sửa/stage/revert `.vscode/launch.json`. Chỉ stage/commit/push khi người dùng cho phép rõ ràng; lưu evidence/commit hash tương ứng, không coi staged là committed hoặc acceptance DONE.

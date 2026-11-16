@@ -1,8 +1,9 @@
-# FOAM EDITOR — IMPLEMENTATION ROADMAP V3
+# FOAM EDITOR — IMPLEMENTATION ROADMAP V3.1
 
 **Ngày:** 15/11/2026
-**Scope:** Obsidian-like editing, views, workspace, Foam knowledge features, quality và host-agnostic architecture.
-**Nguyên tắc:** Bắt đầu đúng tại kết quả đang có, **không làm lại M0/M1.2a hoặc mã M1.2b đã được Codex báo cáo hoàn tất**. Chưa có xác nhận runtime browser cho M1.2b, vì thế điểm vào là kiểm thử T1 và hoàn thiện nghiệm thu.
+**Cập nhật V3.1:** 16/11/2026.
+**Scope:** Obsidian-like editing/views, Markdown fidelity, workspace và Foam knowledge features; Web là nền tảng phát triển/nghiệm thu chính. Electron là tích hợp tương lai; chỉ duy trì modularity và host API tối thiểu. SDK lớn, plugin ecosystem, nhiều framework adapters, code-server, PDF/OCR/legal và cloud sync ngoài scope.
+**Baseline đã xác nhận:** M1.2b accepted with documented limitations tại `bd0e6e71`; M1.3-T1 hoàn tất tại **`829d2569`**, browser B1–B5 user-confirmed PASS, Codex-reported **99/99 Vitest PASS** trên Node 24.21.0 (Node 22 chưa độc lập xác minh). M1.3-T2.1 design audit đã hoàn tất read-only; **M1.3-T2a là NEXT / NOT IMPLEMENTED tại baseline này**. Không làm lại M0/M1.2/T1; phân biệt mã local chưa commit với checkpoint được nghiệm thu theo `PROJECT_STATUS.md`. Overall M1/M1.3 chưa DONE; M1.3-T3/T4, M1.4/M1.5 và M2–M8 chưa hoàn tất.
 
 Đọc cùng: [PRODUCT_PLAN.md](PRODUCT_PLAN.md), [OBSIDIAN_FEATURE_MATRIX.md](OBSIDIAN_FEATURE_MATRIX.md), [PROJECT_STATUS.md](PROJECT_STATUS.md), [QA_ACCEPTANCE.md](QA_ACCEPTANCE.md), `../AGENTS.md`.
 
@@ -11,6 +12,7 @@
 - **Mỗi bước = một nhiệm vụ độc lập**, có mục tiêu, file dự kiến, test, manual acceptance, giới hạn thay đổi. ChatGPT lên gate/review; Copilot **Ask** khảo sát/review read-only khi cần; Codex implement/test; người dùng kiểm tra Chrome/Edge; Git chỉ commit/push sau duyệt.
 - **Trạng thái:** DONE (đã nghiệm thu), CODE REVIEWED (test/review mã nhưng chưa browser/UAT), IN PROGRESS, PLANNED, BLOCKED. Không dùng “DONE” dựa vào README hoặc lời hứa.
 - **GATE chung cho mỗi mục có thay đổi code:** focused tests PASS → affected suites PASS → build PASS → kiểm tra diff → browser/manual theo rủi ro → chỉ stage file đúng scope → commit/push khi được duyệt → cập nhật `PROJECT_STATUS.md`.
+- **Cleanup trong Definition of Done:** xác định obsolete paths, dead code, unused imports/CSS và implementation trùng; chỉ xóa sau kiểm tra references và regression safety. Giữ historical evidence, tests hữu ích và Foam Core đang được tái sử dụng; tránh unrelated refactoring. Mọi cleanup phải qua affected tests, build và review. Cập nhật docs V3.1 không triển khai cleanup code.
 - **Bảo toàn:** không mất Markdown; disk baseline là bản thực sự persist; CodeMirror có thể chứa bản nháp mới hơn; không silent external overwrite; Core/Graph chỉ nhận persisted snapshots; không bao giờ stage/revert `.vscode/launch.json`; không ghi đè các thay đổi local khác.
 - **Không refactor quá sớm:** ưu tiên giữ `main.ts` làm orchestration trong khi M1 đang ổn định; chỉ tách session/controller hoặc rendering khi có test và nhu cầu thật. Hợp đồng giữa CodeMirror/Core/Repository phải rõ trước nâng cấp nhiều pane.
 - **Nhóm nguồn lịch sử:** 31.6/31.7 đã hoàn thành; commit M0 `f9852324`; docs V2 commit `83ceb94c`. Git thực tế phải được xác minh trước bất kỳ thao tác commit nào.
@@ -29,26 +31,26 @@
 | **M7** | Recovery, accessibility, performance, security       | Release-candidate QA                      | P0/P1       |
 | **M8** | Web packaging, adapter contract, release v1          | Independent user demo/handoff             | P1          |
 
-**Sắp thứ tự thực tế:** hoàn tất M1; làm M2 trước khi mở rộng nhiều chức năng khác để sớm kiểm chứng đúng mục tiêu mới; triển khai M3; sau đó M4/M5 có thể gối nhau có kiểm soát. M6/M7 có thể tích lũy QA xuyên suốt nhưng gate cuối vẫn bắt buộc. M8 không bị phụ thuộc vào dự án đồng bộ nhóm khác.
+**Sắp thứ tự thực tế:** hoàn tất M1 qua M1.5 → **Architecture Gate nhẹ** → M2 → M3; sau đó M4/M5 có thể gối nhau có kiểm soát. M6/M7 có thể tích lũy QA xuyên suốt nhưng gate cuối vẫn bắt buộc. M8 tập trung Web và host boundary tối thiểu, không phụ thuộc Electron hoặc dự án đồng bộ nhóm khác. Giữ nguyên các Step IDs M1–M8; Architecture Gate là checkpoint bổ sung giữa M1.5 và M2.
 
 ## 2. M1 — Auto-save & seamless navigation [tiếp nối đang làm]
 
 ### M1.0–M1.2a — Bằng chứng lịch sử, không làm lại
 
 - **M0:** real disk Save, expected-content conflict, Core/Graph sync, Wikilink alias Ctrl/Cmd+Click, Save/Discard/Cancel fallback. Người dùng xác nhận trước đó; mã nguồn checkpoint `f9852324`.
-- **M1.0:** đã tạo ngữ cảnh chung và commit `83ceb94c`; Copilot/Codex PASS đọc ngữ cảnh. **Lưu ý tài liệu V2 sẽ được thay bởi V3 sau khi người dùng review.**
+- **M1.0:** đã tạo ngữ cảnh chung và commit `83ceb94c`; Copilot/Codex PASS đọc ngữ cảnh. Docs V3 đã thay V2 tại `5ec65eec`; V3.1 cập nhật tiếp phạm vi và trạng thái, giữ lịch sử này.
 - **M1.1:** Copilot read-only audit Save và kiến trúc Auto-save; đã đánh giá.
 - **M1.2a:** Codex report coordinator debounce 750 ms, one-save, B→C persisted baseline, `flush/dispose`, 16 test lúc đầu rồi 19 test sau tích hợp. Copilot review PASS WITH MINOR ISSUES.
-- **M1.2b:** Codex report đã nối `main.ts`, permission từ Edit/Save, save status và đường rời session; tổng 66 Vitest PASS, build/format PASS trên Node 24.21.0. Copilot review PASS WITH MINOR ISSUES. **CHƯA manual browser acceptance. CHƯA thấy commit/push M1.2a/b từ người dùng.**
+- **M1.2b:** đã nối `main.ts`, permission từ Edit/Save, save status và đường rời session; báo cáo ban đầu 66 Vitest PASS, sau UX-01 là 67 tại `1ed65d89`; FIX-01/FIX-02 nâng lên 79. Gate accepted with documented limitations tại `bd0e6e71`, browser T2.1–T2.11 user-confirmed PASS trong phạm vi status. Concurrency/Core-only chủ yếu automated, revoke đầy đủ và Node 22 chưa xác minh; không suy diễn full browser race/recovery PASS.
 
-### M1.2b-T1 — Browser smoke: lưu file Markdown thật [NEXT]
+### M1.2b-T1 — Browser smoke: lưu file Markdown thật [PASS — bằng chứng lịch sử]
 
 - **Chuẩn bị:** workspace disposable `D:\Projects\foam-autosave-test` với A.md và B.md, không dùng vault chính. Ghi baseline file trước test.
 - **Thao tác:** chạy Vite PoC, chọn folder, mở A.md, bấm Edit Real File, cấp quyền nếu có; thêm marker `AUTOSAVE_TEST_01`; không bấm Save; đợi debounce + I/O; kiểm tra status; xác nhận nội dung trên disk bằng PowerShell; reload và mở lại A.md.
 - **PASS:** marker nằm trên file vật lý, UI không báo sai “Saved”, mở lại vẫn có marker, không có prompt Save thường trực. Nếu FAIL: ghi ảnh/status/error/log rồi chỉ sửa đúng lỗi ở M1.2b.
-- **Không làm:** M1.3, thêm tính năng mới, commit khi chưa nghiệm thu.
+- **Giới hạn của smoke test:** không tự mở rộng feature hoặc commit khi chưa được duyệt; kết quả basic không thay thế error/concurrency acceptance.
 
-### M1.2b-T2 — Error/concurrency manual + regression [NEXT AFTER T1]
+### M1.2b-T2 — Error/concurrency manual + regression [accepted with documented limitations]
 
 - **Happy path:** gõ nhiều lần cách nhau ngắn hơn 750ms, xác nhận không viết từng ký tự và không mất thay đổi.
 - **Revision B→C:** dùng test harness/deferred write để kiểm tra in-flight B, edit C, disk B trước rồi C và Core cuối cùng C; trình duyệt thực tế nếu khó chặn I/O thì dựa vào integration test và smoke content.
@@ -58,11 +60,19 @@
 - **Session/lifecycle:** Wikilink, Explorer, đổi workspace, Return to Sample, Cancel/Discard, browser reload/close; không mất source đang chỉnh.
 - **PASS:** không P0 data-loss; các lỗi được hiển thị đúng; sample/localStorage vẫn riêng.
 
-### M1.2b-GATE — Chốt tích hợp
+### M1.2b-GATE — Chốt tích hợp [accepted tại bd0e6e71]
 
 - Review đúng diff, không stage `launch.json` hoặc docs local không thuộc scope; chạy focused, suite/ build; xác nhận browser T1/T2; user duyệt commit/push mã M1.2b; cập nhật status với hash. Nếu vẫn có lỗi nghiêm trọng, **không chuyển M1.3**.
+- Verdict lịch sử: **READY WITH DOCUMENTED LIMITATIONS**; giới hạn AS-06/07/09/12/17/18 và Node 22 giữ tại [Project Status](PROJECT_STATUS.md), không coi toàn bộ M1 đã hoàn tất.
 
 ### M1.3 — Seamless navigation và thống nhất fallback
+
+**Trạng thái theo checkpoint `829d2569` (giữ nguyên M1.3.1–M1.3.5 bên dưới):**
+
+- **M1.3-T1:** DONE trong phạm vi fallback; Explorer/Return to Sample dùng Save/Discard/Cancel chung, clean không dialog, Save chờ persistence, lỗi giữ draft, guards giữ an toàn. Browser B1–B5 PASS; 99/99 Vitest và build/format/whitespace Codex-reported PASS; Copilot PASS WITH MINOR ISSUES. In-flight browser races chưa tái hiện độc lập.
+- **M1.3-T2.1:** design audit DONE, **read-only**, không phải implementation.
+- **M1.3-T2a:** **NEXT / NOT IMPLEMENTED tại baseline** — safe automatic save-before-navigation cho Explorer; permission preflight trong original click trước async target reads, flush coordinator và fallback T1 khi lỗi. Đối chiếu mã local chưa commit trước khi triển khai, không ghi đè hoặc làm lại tự động.
+- **M1.3-T2b/T2c, M1.3-T3/T4:** chưa triển khai tại baseline. Các đường navigation khác giữ T1 cho tới nhiệm vụ được duyệt; không mở rộng T2a hoặc coi overall M1.3 DONE.
 
 | ID         | Công việc                                                                                                       | Tiêu chí nghiệm thu                                            |
 | ---------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -82,6 +92,14 @@
 ### M1.5 — M1 stabilization checkpoint
 
 - Chạy regression đầy đủ experiment và focused Core/Graph affected; build và Git diff; smoke Chrome/Edge trên disposable workspace; ghi số tests, Node version, browser, commit; hoàn thành M1 trước M2.
+
+### Architecture Gate — sau M1.5, trước M2 [PLANNED]
+
+- Kiểm tra boundary **Editor / Session / Foam Core / Repository / Host**, coupling quá mức và obsolete code bằng source/reference thực tế.
+- Xác nhận một document model và một persistence owner nhất quán; không tạo baseline/write owner cạnh tranh, giữ persisted-only Core/Graph và conflict/line-ending protections.
+- Xác định module extraction nhỏ nhất cần cho reuse và **host API tối thiểu theo caller thực tế**. Nhóm khác có thể phụ trách tích hợp ứng dụng cuối; không tạo SDK lớn, plugin ecosystem hoặc nhiều framework adapters.
+- Với boundary cần tách, thiết lập focused tests cho nội dung/revision, persistence/error và host interaction liên quan; chạy affected regression/build và review theo DoD. Cleanup chỉ trong scope đã kiểm tra references, không xóa lịch sử/tests hữu ích/Core đang dùng.
+- Gate PASS khi boundary/ownership/API tối thiểu được review và các extraction cần thiết có tests PASS. Đây không phải triển khai Electron hoặc thay các Step IDs M2–M8; chỉ bắt đầu M2 sau gate này.
 
 ## 3. M2 — Chế độ soạn thảo và chế độ xem [mới, ưu tiên cao]
 
@@ -162,11 +180,11 @@ Trước M4.5 phải có contract rõ khi hai pane nhìn cùng note: **một ngu
 - **M7.6 Regression CI/local commands:** unit + integration + browser checks + documentation current limitations; Node 22 compatibility cần thử vì Codex báo dùng Node 24.21.0.
 - **M7.7 Release candidate gate:** không P0, P1 có test hoặc workaround được chấp thuận; không thêm feature mới khi RC đang khóa.
 
-## 9. M8 — Web integration, đóng gói và release v1
+## 9. M8 — Web delivery, minimal host boundary và release v1
 
-- **M8.1:** Inventory module/contract: `EditorController`, `NoteRepository`, `LinkNavigator`, `AssetResolver`, `WorkspaceService`; tên chỉ là **đề xuất**, đối chiếu code trước khi tạo interface.
+- **M8.1:** Inventory module/contract tối thiểu theo Architecture Gate: `EditorController`, `NoteRepository`, `LinkNavigator`, `AssetResolver`, `WorkspaceService` là tên **đề xuất**, không phải yêu cầu tạo đủ interfaces/SDK. Chỉ giữ phần caller thực tế cần để reuse.
 - **M8.2:** Web demo package: khởi động độc lập, chọn folder, mở note, Live/Source/Reading, Tabs/Split, Graph/Backlinks; không cần nhóm sync.
-- **M8.3:** Host adapter smoke: lưu và đọc thông qua interface có thể thay host. Electron PoC chỉ làm nếu có nhu cầu/host xác định, không làm rộng trước khi product UX ổn.
+- **M8.3:** Kiểm tra host boundary/API tối thiểu qua Web và focused tests; bàn giao cho nhóm tích hợp nếu cần. Electron là future integration target, không phải implementation/gate hiện tại; chỉ làm khi được duyệt riêng. Không xây nhiều framework-specific adapters.
 - **M8.4:** Windows setup guide, screenshots/UAT checklist, hotkey reference, architecture diagram, known limitations và cách thử lại.
 - **M8.5:** Một người khác chạy từ README, hoàn thành U1–U5, tạo changelog/release tag **chỉ sau phê duyệt**.
 
@@ -195,7 +213,7 @@ Các ước lượng được tạo để xếp thứ tự, **chưa dựa trên 
 4. Người dùng chạy browser test trên disposable workspace; đưa output/screenshots/log khi có lỗi.
 5. Review diff mới, không trộn các thay đổi local cũ; chỉ stage chính xác file liên quan; `git diff --cached --check`; commit/push sau khi người dùng đồng ý.
 6. Cập nhật `PROJECT_STATUS.md`: trạng thái, test (reported/verified/manual), commit và Step ID tiếp theo. Nếu đổi scope, cập nhật Product Plan + Matrix + Roadmap cùng lúc.
-7. Đảm bảo source docs không nói vẫn phải làm PDF/pháp lý: `PRODUCT_PLAN.md` bản V3 là quyết định ưu tiên mới. `AGENTS.md` chỉ nên tham chiếu file hiện hành, giữ các quy tắc repo upstream.
+7. Đảm bảo source docs theo `PRODUCT_PLAN.md` V3.1: không đưa lại PDF/legal/cloud sync/code-server hoặc SDK lớn vào scope. Giữ các quy tắc repo upstream trong `AGENTS.md`.
 
 ### 11.1. Những điều tuyệt đối không tự động làm
 
@@ -208,8 +226,8 @@ Các ước lượng được tạo để xếp thứ tự, **chưa dựa trên 
 
 ## 12. Checklist mở phiên làm việc tiếp theo
 
-1. Đọc `AGENTS.md`, năm docs V3 và `git status -sb`, `git log -1 --oneline` (chỉ đọc).
-2. Kiểm tra source hiện tại của `real-note-autosave.ts`, `main.ts` và tests M1.2b còn như báo cáo Codex không; giữ các thay đổi local.
-3. **Bắt đầu M1.2b-T1** với A/B markdown disposable. Đây là công việc đang chờ, **không** giao lại Codex implement từ đầu.
-4. Nếu T1 PASS, sang T2; nếu T1 FAIL, sửa lỗi với focused test trước.
-5. M1.2b-GATE đủ bằng chứng rồi mới M1.3; sau M1 ổn định mới M2.
+1. Đọc `AGENTS.md`, năm docs V3.1 và `git status -sb`, `git log -1 --oneline` (chỉ đọc).
+2. Xác nhận baseline `829d2569`, giữ mọi thay đổi local, phân biệt committed/accepted với uncommitted/unaccepted theo `PROJECT_STATUS.md`.
+3. **Nhiệm vụ implementation tiếp theo: M1.3-T2a — Explorer automatic save-before-navigation**, sau T2.1 design audit read-only. Đối chiếu mã local hiện có trước; không làm lại M1.2b hoặc T1 và không mở rộng sang T2b/T2c/T3/T4.
+4. Test trước sửa, giữ fallback và data-safety guards, chạy focused/suite/build/review và browser gate theo rủi ro. Chỉ cleanup sau reference checks và regression safety; Git write chỉ khi được duyệt.
+5. Overall M1/M1.3 chưa DONE. Hoàn tất M1.5 rồi qua Architecture Gate nhẹ trước M2; M2–M8 vẫn là kế hoạch chưa hoàn tất.

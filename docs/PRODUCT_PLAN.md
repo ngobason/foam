@@ -1,6 +1,7 @@
-# FOAM EDITOR — PRODUCT PLAN V3
+# FOAM EDITOR — PRODUCT PLAN V3.1
 
 **Ngày điều chỉnh:** 15/11/2026
+**Cập nhật V3.1:** 16/11/2026 — ưu tiên editor trên Web và tái sử dụng tối thiểu.
 **Chủ đề:** Trình soạn thảo Markdown và ứng dụng ghi chú ngày càng gần trải nghiệm Obsidian.
 **Trạng thái:** Định hướng mới được người dùng yêu cầu. Mốc triển khai vẫn phải được kiểm chứng theo `PROJECT_STATUS.md`.
 
@@ -8,7 +9,7 @@
 
 ## 1. Mục tiêu sản phẩm và nguyên tắc thành công
 
-Foam Editor là **ứng dụng Markdown local-first** sử dụng **CodeMirror 6** để tạo trải nghiệm soạn thảo tương tác, tái sử dụng **Foam Core** cho không gian ghi chú, Wikilinks, liên kết, tìm kiếm/ngữ nghĩa và Graph, trước hết chạy độc lập trên **Web**, sau đó có thể đưa vào host **Electron/Web** qua adapter. Đích không phải sao chép toàn bộ Obsidian hoặc chuyển nguyên source/plugin của Obsidian; đích là **trải nghiệm tương đương ở các hành vi quan trọng**, được kiểm thử bằng những kịch bản ghi chú thật.
+Foam Editor là **Markdown Editor local-first giống Obsidian**, sử dụng **CodeMirror 6** cho editing và **Foam Core** cho workspace, Wikilinks, liên kết và Graph. **Web là nền tảng phát triển và nghiệm thu chính**. Ưu tiên Live Preview, Source Mode, Reading View, Markdown fidelity, Wikilinks, Backlinks, Graph và editor UX. Electron chỉ là đích tích hợp tương lai, không phải yêu cầu implementation hoặc gate hiện tại. Đích không phải sao chép toàn bộ Obsidian hoặc chuyển nguyên source/plugin của Obsidian; đích là **trải nghiệm tương đương ở các hành vi quan trọng**, được kiểm thử bằng những kịch bản ghi chú thật.
 
 **Năm trụ cột sản phẩm đã thay đổi:**
 
@@ -16,7 +17,7 @@ Foam Editor là **ứng dụng Markdown local-first** sử dụng **CodeMirror 6
 2. **Live Preview fidelity:** khi đọc thấy nội dung định dạng; khi sửa chọn đúng cú pháp Markdown. Chú trọng caret/selection, Undo/Redo, clipboard, task, list, heading, quote, links, image, code, table/callout, tiếng Việt IME và tài liệu dài.
 3. **Workspace UX:** file explorer, note create/open/rename/move/delete an toàn; tab/split-pane; tìm kiếm/quick switch; history/back-forward; trạng thái Save dễ hiểu, navigation mượt.
 4. **Foam knowledge navigation:** dùng lại Foam Core cho Wikilink, alias, autocomplete, Backlinks, Outgoing links, Outline, Tags và global/local Graph. Không dựng thêm graph/index trùng khi Core đã có.
-5. **Chất lượng, khả năng tích hợp:** local-first, Auto-save an toàn, phục hồi dữ liệu, accessibility, performance, test automation; UI/module có thể gắn vào Web/Electron qua hợp đồng adapter đủ rõ, không cần xây đồng bộ đa thiết bị.
+5. **Chất lượng, khả năng tái sử dụng:** local-first, Auto-save an toàn, phục hồi dữ liệu, accessibility, performance và test automation trên Web; chỉ giữ editor modularity, host boundary và API tối thiểu cần cho reuse. Nhóm khác có thể phụ trách tích hợp ứng dụng cuối; không xây SDK lớn hoặc nhiều adapter theo framework.
 
 ### 1.1. Khi nào có thể nói “gần Obsidian”?
 
@@ -26,9 +27,9 @@ So sánh theo **hành vi cụ thể**, không chỉ màu sắc hoặc ảnh ch�
 
 - **P0 / phải có trước khi mở rộng:** không mất dữ liệu; real note open/edit/auto-save/reopen; ba chế độ xem; chuyển mode an toàn; tương tác Live Preview quan trọng; điều hướng cơ bản.
 - **P1 / mục tiêu v1:** UI workspace đủ dùng với tabs/split, file CRUD, search, quick switch, Foam Backlinks/Graph, code/table/callout/attachments, phím tắt, accessibility và regression.
-- **P2 / cân nhắc sau v1:** Canvas tương đương Obsidian, hệ thống plugin/marketplace, community plugins, mobile hoàn chỉnh, multi-window nâng cao, themes sâu, collaboration và cloud sync.
+- **P2 / cân nhắc sau v1:** Canvas tương đương Obsidian, mobile hoàn chỉnh, multi-window nâng cao, themes sâu và collaboration; không tự mở rộng scope hiện tại.
 
-**Không nằm trong phạm vi:** PDF extraction/import; quản lý quy định pháp luật, auto-expire hoặc các business workflows pháp lý; đồng bộ Git đa thiết bị của nhóm khác; clone 100% UI/plugin hệ sinh thái Obsidian. **Generic YAML frontmatter / Properties** vẫn trong phạm vi như một tính năng Markdown thông thường, không có schema pháp lý.
+**Không nằm trong phạm vi V3.1:** PDF extraction/import/OCR; quản lý quy định pháp luật, auto-expire hoặc business workflows pháp lý; cloud sync và đồng bộ Git đa thiết bị của nhóm khác; code-server; SDK lớn, plugin ecosystem/marketplace, nhiều framework-specific adapters hoặc clone 100% Obsidian. **Generic YAML frontmatter / Properties** vẫn trong phạm vi Markdown thông thường, không có schema pháp lý. Các đề xuất plugin/cloud trong V3 cũ không còn là cam kết roadmap V3.1.
 
 ## 2. Mô hình mode/view phải triển khai đúng
 
@@ -59,7 +60,7 @@ So sánh theo **hành vi cụ thể**, không chỉ màu sắc hoặc ảnh ch�
 ## 4. Kiến trúc mục tiêu và nguyên tắc kế thừa
 
 ```text
-                     WEB APP / ELECTRON HOST (tùy giai đoạn)
+                     WEB APP (nghiệm thu) / FUTURE HOST
                                       |
                     WORKSPACE SHELL (tabs/panes/sidebars)
                                       |
@@ -76,9 +77,11 @@ So sánh theo **hành vi cụ thể**, không chỉ màu sắc hoặc ảnh ch�
 - CodeMirror giữ editor transactions, selection, widgets/decorations; không sở hữu filesystem hoặc logic FoamGraph.
 - Session controller giữ active note, mode/view, revision và Save lifecycle. Không có hai đường ghi hoặc baseline cạnh tranh.
 - Foam Core xử lý link resolution, note indexing và graph; chỉ publish revision đã được lưu thành công. Core phải không import thẳng `vscode` hay DOM; adapter host ở rìa.
-- Repository adapter xử lý list/read/write, permissions, `expectedContent`, rename/delete và assets; browser File System Access API có giới hạn sandbox, Electron adapter là đường mở rộng.
+- Repository adapter xử lý list/read/write, permissions, `expectedContent`, rename/delete và assets; browser File System Access API có giới hạn sandbox. Chỉ giữ boundary cần thiết cho host tương lai; chưa implement Electron adapter.
 - Reading renderer và Live Preview dùng cùng parse semantics/fixtures khi khả thi; không tự sửa hoặc chuẩn hóa Markdown nếu người dùng không yêu cầu.
 - Mode switch là thay đổi UI/session state, **không phải** chuyển sang một hệ lưu thứ hai.
+
+**Architecture Gate sau M1.5, trước M2:** kiểm tra Editor/Session/Foam Core/Repository/Host, thống nhất document/persistence ownership, chỉ tách module và xác định host API tối thiểu khi có nhu cầu reuse thực tế, kèm focused boundary tests. Đây là review và điều chỉnh nhỏ, không phải dự án SDK/Electron. Cleanup theo DoD của [roadmap](IMPLEMENTATION_ROADMAP.md): kiểm tra reference/regression trước khi xóa, giữ bằng chứng lịch sử, tests hữu ích và Core đang dùng.
 
 ## 5. Tiêu chí hoàn thành theo bản phát hành
 
@@ -89,7 +92,7 @@ So sánh theo **hành vi cụ thể**, không chỉ màu sắc hoặc ảnh ch�
 | **V0.4 — Workspace UI**                | CRUD, explorer thư mục, tabs và split panes, search                    | Safe file lifecycle + E2E navigation pass                        |
 | **V0.5 — Foam knowledge**              | Autocomplete, Backlinks, Outline, Graph thao tác được                  | Core-derived links reflect persisted notes                       |
 | **V0.8 — Productivity / RC**           | Quick switch, commands, settings, recovery, performance                | Error/recovery + a11y + scale smoke pass                         |
-| **V1.0 — Usable Obsidian-like Editor** | Một người khác chạy Web độc lập và hoàn thành U1–U5                    | UAT + README + stable artifact; Web/Electron boundary documented |
+| **V1.0 — Usable Obsidian-like Editor** | Một người khác chạy Web độc lập và hoàn thành U1–U5                    | UAT + README + stable artifact; minimal host boundary documented |
 
 Đây là **mốc năng lực** chứ không phải nhãn version đã tạo hoặc lời hứa ngày release. Các giai đoạn có thể được điều chỉnh theo kết quả browser test và độ khó trong source thực tế.
 
@@ -97,9 +100,9 @@ So sánh theo **hành vi cụ thể**, không chỉ màu sắc hoặc ảnh ch�
 
 **V1 bắt buộc:** Editing Live Preview + Source; Reading View; switch an toàn; auto-save; undo/redo/IME; Markdown cơ bản + code/table/callout/image; file lifecycle, workspace navigation, tabs/split tối thiểu; Wikilink/backlinks/graph; tìm kiếm/quick switch; basic properties/outline; error/recovery; tài liệu và demo Web có thể tự chạy.
 
-**V1 có thể giảm cấp nếu khó:** 2 pane thay vì layout tùy ý; Graph local trước global advanced; generic Properties đọc/sửa frontmatter cơ bản, chưa cần editor dạng database; chỉ desktop browser Chrome/Edge support File System Access API trước; Electronic packaging là tùy điều kiện host, nhưng adapter contract phải có.
+**V1 có thể giảm cấp nếu khó:** 2 pane thay vì layout tùy ý; Graph local trước global advanced; generic Properties đọc/sửa frontmatter cơ bản, chưa cần editor dạng database; chỉ desktop browser Chrome/Edge support File System Access API trước. Chỉ tài liệu hóa host API tối thiểu; Electron packaging/tích hợp do giai đoạn hoặc nhóm khác xử lý khi được duyệt riêng.
 
-**Sau v1:** Canvas kiểu Obsidian, tabs nhiều cửa sổ, plugin marketplace, đồng bộ/cloud, Publish, mobile và theme nâng cao. Không âm thầm đổi những hạng mục P1 thành “đã có” nếu chưa qua gate.
+**Sau v1:** có thể xem xét Canvas kiểu Obsidian, tabs nhiều cửa sổ, Publish, mobile và theme nâng cao khi được duyệt riêng. Electron là tích hợp tương lai; SDK/plugin ecosystem/code-server/cloud sync không nằm trong kế hoạch hiện tại. Không âm thầm đổi những hạng mục P1 thành “đã có” nếu chưa qua gate.
 
 ## 7. Nguồn, trạng thái và quản lý thay đổi
 

@@ -1,8 +1,9 @@
-# FOAM EDITOR — QA & ACCEPTANCE PLAYBOOK V3
+# FOAM EDITOR — QA & ACCEPTANCE PLAYBOOK V3.1
 
 **Ngày:** 15/11/2026.
+**Cập nhật V3.1:** 16/11/2026.
 **Mục tiêu:** Kiểm chứng Obsidian-like editor bằng workflow thật, không dựa vào số lượng unit test đơn lẻ.
-**Phạm vi:** Markdown, views/modes, navigation, workspace, Foam Core và local-first safety. Không có test tách PDF/pháp lý.
+**Phạm vi:** Markdown fidelity, Live Preview/Source Mode/Reading View, navigation, workspace UX, Foam Core Wikilinks/Backlinks/Graph và local-first safety. **Web là nền tảng phát triển/nghiệm thu chính**; Electron là integration target tương lai, không phải yêu cầu hiện tại. Chỉ kiểm tra modularity/host API tối thiểu để reuse; không yêu cầu SDK lớn, plugin ecosystem, nhiều framework adapters, code-server, PDF/OCR/pháp lý hoặc cloud sync.
 
 ## 1. Nguyên tắc nghiệm thu
 
@@ -13,6 +14,8 @@
 - **Fail safe:** không tắt error để test xanh, không `force overwrite` dữ liệu khác; nếu lỗi cần lưu log, bảo vệ draft rồi mới sửa.
 
 **Bug severity:** `P0` mất dữ liệu, ghi đè file ngoài, wrong-file save, session corruption hoặc source Markdown tự hỏng; `P1` mode view sai chức năng, navigation sai, mất caret/IME thường xuyên; `P2` lỗi thẩm mỹ, animation, minor shortcut.
+
+**Trạng thái evidence tại baseline `829d2569`:** M1.2b accepted with documented limitations tại `bd0e6e71`; M1.3-T1 committed, browser B1–B5 user-confirmed PASS; 99/99 Vitest + build/format/whitespace PASS là Codex-reported trên Node 24.21.0, Node 22 chưa độc lập xác minh. M1.3-T2.1 chỉ là design audit read-only đã hoàn tất; **T2a NEXT / NOT IMPLEMENTED tại baseline**, không phải functionality đã nghiệm thu. Phân biệt mã local chưa commit và phạm vi browser/automated trong [PROJECT_STATUS.md](PROJECT_STATUS.md); overall M1/M1.3 chưa DONE. Các bảng dưới là kịch bản nghiệm thu, không tự chứng minh chúng đã chạy.
 
 ## 2. Workspace test chuẩn (không đụng vault thật)
 
@@ -143,16 +146,24 @@ Không tự nhận cổng 5173 nếu Vite thông báo cổng khác. Không yêu 
 
 ## 8. Regression và gate theo release
 
-| Gate     | Bắt buộc                                                           | Bằng chứng                            |
-| -------- | ------------------------------------------------------------------ | ------------------------------------- |
-| **M1**   | AS-01–04; relevant AS-05–18; old Wikilink tests; disk/Graph safety | Test log + browser/screenshots + hash |
-| **M2**   | MV-01–08 + AS regressions; no unexpected Markdown diff             | Before/after/source + browser         |
-| **M3**   | MD-01–10 relevant, mode consistency; IME/Undo                      | Fixture outputs, test/build           |
-| **M4**   | WS-01–06 và M1 safeguards                                          | Browser workspace walkthrough         |
-| **M5**   | FO-01–04, graph persisted-only                                     | Test data/graph screenshots           |
-| **M6**   | UX-01–02 và mode toggles                                           | Keyboard walkthrough                  |
-| **M7**   | Recovery/a11y/performance/security checklists                      | Measured baselines and issue list     |
-| **V1.0** | Người khác tự chạy theo README, U1–U5 đều PASS, không P0           | Signed-off user acceptance record     |
+| Gate                  | Bắt buộc                                                                           | Bằng chứng                                 |
+| --------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------ |
+| **M1**                | AS-01–04; relevant AS-05–18; old Wikilink tests; disk/Graph safety                 | Test log + browser/screenshots + hash      |
+| **Architecture Gate** | Sau M1.5, trước M2: boundaries, ownership, minimal reuse/host API và focused tests | Boundary review + affected test/build logs |
+| **M2**                | MV-01–08 + AS regressions; no unexpected Markdown diff                             | Before/after/source + browser              |
+| **M3**                | MD-01–10 relevant, mode consistency; IME/Undo                                      | Fixture outputs, test/build                |
+| **M4**                | WS-01–06 và M1 safeguards                                                          | Browser workspace walkthrough              |
+| **M5**                | FO-01–04, graph persisted-only                                                     | Test data/graph screenshots                |
+| **M6**                | UX-01–02 và mode toggles                                                           | Keyboard walkthrough                       |
+| **M7**                | Recovery/a11y/performance/security checklists                                      | Measured baselines and issue list          |
+| **V1.0**              | Người khác tự chạy theo README, U1–U5 đều PASS, không P0                           | Signed-off user acceptance record          |
+
+### 8.1. Architecture Gate nhẹ và cleanup Definition of Done
+
+- Kiểm tra boundaries **Editor / Session / Foam Core / Repository / Host** trên code thực tế; xác nhận một mô hình nhất quán về document và persistence ownership, giữ session guards, conflict guard và persisted-only Core synchronization.
+- Xác định module extraction và host API **tối thiểu** cần cho reuse/caller thực tế; có thể bàn giao final application integration cho nhóm khác. Không biến gate thành dự án SDK, nhiều framework adapters hoặc Electron implementation.
+- Review excessive coupling, obsolete paths, dead code, unused imports/CSS và redundant implementations. Chỉ xóa sau kiểm tra references và regression safety; không xóa historical evidence, tests hữu ích hoặc Foam Core đang được tái sử dụng; tránh unrelated refactoring.
+- Extraction cần focused tests cho boundary; mọi cleanup cần affected tests, build và review PASS. Ghi rõ phần không cần thay đổi và phần deferred; design audit không thay thế implementation/test evidence. Đây là tiêu chí cho công việc sau này, **không thực hiện cleanup trong task docs V3.1**.
 
 ## 9. Mẫu báo cáo sau mỗi test / checkpoint
 
