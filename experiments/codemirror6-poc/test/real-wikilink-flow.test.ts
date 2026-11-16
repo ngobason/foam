@@ -3,10 +3,16 @@ import {
   EditorView as CodeMirrorView,
   type ViewUpdate,
 } from '@codemirror/view';
-import type { EditorState, TransactionSpec } from '@codemirror/state';
+import {
+  StateEffect,
+  type EditorState,
+  type TransactionSpec,
+} from '@codemirror/state';
+import { history, undo, redo } from '@codemirror/commands';
 import { FoamGraph, URI } from '@foam/core';
 import { realLinkNavigationContext } from '../src/internal-link-navigation';
 import { noteUriFacet } from '../src/note-context';
+import { BrowserNoteRepository } from '../src/browser-note-repository';
 
 // Exercise main.ts's real dialog, repository, save and navigation wiring.
 // Only the browser UI and EditorView rendering are replaced in this Node test.
@@ -417,6 +423,257 @@ describe('real Wikilink dialog and safe save wiring', () => {
 });
 
 describe('real-file auto-save integration', () => {
+  it.each([
+    '# B\r\nFirst\nLast',
+    '# B\nFirst\r\nLast',
+    '# B\r\nFirst\rLast',
+    '# B\rFirst\r\nLast',
+    '# B\nFirst\rLast',
+    '# B\rFirst\nLast',
+    '# B\r\nFirst\nSecond\rLast',
+  ])('M1.2b-FIX-02 keeps mixed line endings read-only: %j', async originalB => {
+    const { files, write, context, adapter, requestPermission } =
+      await openWorkspace(false);
+    files.set('B.md', originalB);
+    context.openNote(URI.file('/real-notes/B.md'));
+    await vi.waitFor(() =>
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md')
+    );
+    expect(editor().state.readOnly).toBe(true);
+    expect(editor().state.doc.toString()).toBe(
+      originalB.replace(/\r\n?|\n/g, '\n')
+    );
+    expect(browser.elements.get('.save-status')!.textContent).toMatch(
+      /mixed line endings/i
+    );
+    expect(button('Edit Real File').style.display).toBe('none');
+    expect(button('Save Real File').style.display).toBe('none');
+    const preview = editor().state;
+    expect(
+      preview.doc.sliceString(0, undefined, originalB.match(/\r\n?|\n/)![0])
+    ).not.toBe(originalB);
+    // Even an invocation of the hidden action cannot enable editing or writing.
+    await button('Edit Real File').click();
+    expect(editor().state).toBe(preview);
+    expect(browser.window.alert).toHaveBeenCalledWith(
+      expect.stringMatching(/mixed line endings/i)
+    );
+    await button('Save Real File').click();
+    vi.useFakeTimers();
+    editText('A widget must not alter this read-only preview');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(editor().state.doc.toString()).toBe(preview.doc.toString());
+    expect(files.get('B.md')).toBe(originalB);
+    expect(adapter.readNote(URI.file('/real-notes/B.md'))).toBe(originalB);
+    expect(write).not.toHaveBeenCalled();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(browser.storage.setItem).not.toHaveBeenCalled();
+
+    // The restriction belongs to B, not the workspace or the next session.
+    const next = editor().state.facet(realLinkNavigationContext)!;
+    next.openNote(URI.file('/real-notes/A.md'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    expect(button('Edit Real File').style.display).toBe('inline-block');
+    await button('Edit Real File').click();
+    editText('Normal A\n[[B]]');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(write).toHaveBeenCalledExactlyOnceWith('A.md', 'Normal A\n[[B]]');
+    expect(files.get('B.md')).toBe(originalB);
+  });
+
+  it('M1.2b-FIX-02 preserves uniform lone CR through Auto-save, Manual Save and conflict', async () => {
+    const { files, write, adapter } = await openWorkspace(false);
+    files.set('B.md', '# B\rOriginal\r');
+    await browser.elements
+      .get('#mvp-file-list')!
+      .children.find(e => e.dataset.noteName === 'B.md')!
+      .click();
+    await button('Edit Real File').click();
+    expect(browser.elements.get('.save-status')!.textContent).toBe('Saved');
+    vi.useFakeTimers();
+    editText('# B\nFirst [[A]]\n');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(write).toHaveBeenCalledExactlyOnceWith('B.md', '# B\rFirst [[A]]\r');
+    editText('# B\nSecond [[A]]\n');
+    await button('Save Real File').click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(files.get('B.md')).toBe('# B\rSecond [[A]]\r');
+    expect(adapter.readNote(URI.file('/real-notes/B.md'))).toBe(
+      '# B\rSecond [[A]]\r'
+    );
+    expect(browser.elements.get('.save-status')!.textContent).toBe('Saved');
+    files.set('B.md', '# B\rExternal\r');
+    editText('# B\nDraft\n');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(files.get('B.md')).toBe('# B\rExternal\r');
+    expect(editor().state.doc.toString()).toBe('# B\nDraft\n');
+    expect(browser.window.alert).toHaveBeenCalledWith(
+      expect.stringContaining('modified outside')
+    );
+  });
+
+  it('M1.2b-FIX-02 preserves Undo/Redo with CRLF Auto-save snapshots', async () => {
+    const { files } = await openWorkspace(false);
+    files.set('B.md', '# B\r\nOriginal');
+    await browser.elements
+      .get('#mvp-file-list')!
+      .children.find(e => e.dataset.noteName === 'B.md')!
+      .click();
+    await button('Edit Real File').click();
+    editor().dispatch({ effects: StateEffect.appendConfig.of(history()) });
+    vi.useFakeTimers();
+    editText('# B\nEdited');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(files.get('B.md')).toBe('# B\r\nEdited');
+    expect(
+      undo({
+        state: editor().state,
+        dispatch: transaction => editor().dispatch(transaction),
+      })
+    ).toBe(true);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(files.get('B.md')).toBe('# B\r\nOriginal');
+    expect(
+      redo({
+        state: editor().state,
+        dispatch: transaction => editor().dispatch(transaction),
+      })
+    ).toBe(true);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(files.get('B.md')).toBe('# B\r\nEdited');
+  });
+
+  it.each(['\r\n', '\n'])(
+    'M1.2b-FIX-01 saves B with %j line endings after A conflict, Cancel and Discard',
+    async separator => {
+      const { files, write, context, adapter } = await openWorkspace(false);
+      const save = vi.spyOn(
+        BrowserNoteRepository.prototype,
+        'saveMarkdownNote'
+      );
+      const originalB = ['# B', '', 'Original [[A]]', 'Last line'].join(
+        separator
+      );
+      files.set('B.md', originalB);
+      vi.useFakeTimers();
+      editText('A draft [[B]]');
+      files.set('A.md', 'External A');
+      await vi.advanceTimersByTimeAsync(750);
+      expect(write).not.toHaveBeenCalled();
+      expect(browser.window.alert).toHaveBeenCalledWith(
+        expect.stringContaining('modified outside')
+      );
+
+      context.openNote(URI.file('/real-notes/B.md'));
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      await dialogButton('Save').click();
+      expect(browser.dialogs.at(-1)!.isConnected).toBe(true);
+      expect(editor().state.doc.toString()).toBe('A draft [[B]]');
+      await dialogButton('Cancel').click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+
+      context.openNote(URI.file('/real-notes/B.md'));
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      await dialogButton('Discard').click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/B.md');
+      // CodeMirror stores logical lines, while the repository retains raw text.
+      expect(editor().state.doc.toString()).toBe(
+        originalB.replace(/\r\n/g, '\n')
+      );
+      expect(files.get('B.md')).toBe(originalB);
+      await button('Edit Real File').click();
+      expect(browser.elements.get('.save-status')!.textContent).toBe('Saved');
+      browser.window.alert.mockClear();
+
+      editor().dispatch({
+        changes: { from: editor().state.doc.length, insert: '\nT2_BURST_01' },
+      });
+      await vi.advanceTimersByTimeAsync(750);
+      const firstB = originalB + separator + 'T2_BURST_01';
+      expect(save).toHaveBeenLastCalledWith('B.md', firstB, originalB);
+      expect(files.get('B.md')).toBe(firstB);
+      expect(write).toHaveBeenCalledExactlyOnceWith('B.md', firstB);
+      expect(adapter.readNote(URI.file('/real-notes/B.md'))).toBe(firstB);
+      expect(browser.elements.get('.save-status')!.textContent).toBe('Saved');
+
+      editor().dispatch({
+        changes: { from: editor().state.doc.length, insert: '\nT2_BURST_02' },
+      });
+      await vi.advanceTimersByTimeAsync(750);
+      const secondB = firstB + separator + 'T2_BURST_02';
+      expect(save).toHaveBeenLastCalledWith('B.md', secondB, firstB);
+      expect(files.get('B.md')).toBe(secondB);
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(adapter.readNote(URI.file('/real-notes/B.md'))).toBe(secondB);
+      expect(browser.window.alert).not.toHaveBeenCalled();
+      expect(files.get('A.md')).toBe('External A');
+      expect(browser.storage.setItem).not.toHaveBeenCalled();
+
+      // Even a line-ending-only external change must trip the strict guard.
+      const externalB = secondB.replace(
+        /\r\n|\n/g,
+        separator === '\r\n' ? '\n' : '\r\n'
+      );
+      files.set('B.md', externalB);
+      editor().dispatch({
+        changes: { from: editor().state.doc.length, insert: '\nKeep draft' },
+      });
+      await vi.advanceTimersByTimeAsync(750);
+      expect(files.get('B.md')).toBe(externalB);
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(adapter.readNote(URI.file('/real-notes/B.md'))).toBe(secondB);
+      expect(editor().state.doc.toString()).toContain('Keep draft');
+      expect(browser.window.alert).toHaveBeenCalledWith(
+        expect.stringContaining('modified outside')
+      );
+    }
+  );
+
+  it('M1.2b-FIX-01 keeps CRLF snapshots and baseline ordered during an in-flight save', async () => {
+    const { files, write, adapter } = await openWorkspace(false);
+    files.set('B.md', '# B\r\nOriginal');
+    await browser.elements
+      .get('#mvp-file-list')!
+      .children.find(e => e.dataset.noteName === 'B.md')!
+      .click();
+    await button('Edit Real File').click();
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    write.mockImplementationOnce(async (name, content) => {
+      await gate.promise;
+      files.set(name, content);
+    });
+    editText('# B\nFirst [[A]]');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(write).toHaveBeenCalledExactlyOnceWith('B.md', '# B\r\nFirst [[A]]');
+    editText('# B\nSecond [[A]]');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(write).toHaveBeenCalledTimes(1);
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(files.get('B.md')).toBe('# B\r\nFirst [[A]]');
+    expect(adapter.readNote(URI.file('/real-notes/B.md'))).toBe(
+      '# B\r\nFirst [[A]]'
+    );
+    expect(browser.elements.get('.save-status')!.textContent).toBe(
+      'Unsaved changes'
+    );
+    await button('Save Real File').click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(files.get('B.md')).toBe('# B\r\nSecond [[A]]');
+    expect(adapter.readNote(URI.file('/real-notes/B.md'))).toBe(
+      '# B\r\nSecond [[A]]'
+    );
+    expect(browser.elements.get('.save-status')!.textContent).toBe('Saved');
+  });
+
   it.each([{ contents: ['B'] }, { contents: ['B', 'C', 'D'] }])(
     'debounces editor changes $contents and keeps them out of localStorage',
     async ({ contents }) => {

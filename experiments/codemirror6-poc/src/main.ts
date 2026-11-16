@@ -324,7 +324,9 @@ const realFileEditExtensions: Extension[] = [
       return;
     }
 
-    realFileSession.autosave?.request(update.state.doc.toString());
+    realFileSession.autosave?.request(
+      update.state.doc.sliceString(0, undefined, realFileSession.lineSeparator)
+    );
     updateRealFileStatus(realFileSession);
   }),
 ];
@@ -332,10 +334,16 @@ const realFileEditExtensions: Extension[] = [
 let savedSampleState: EditorState | null = null;
 let savedSampleTitle = '';
 
+const MIXED_LINE_ENDINGS_MESSAGE =
+  'Read only: mixed line endings. Editing and saving are disabled to preserve ' +
+  'this file. Use a separate copy with uniform line endings to edit.';
+
 type RealFileSession = {
   repository: BrowserNoteRepository;
   name: string;
   uri: URI;
+  lineSeparator: string;
+  mixedLineEndings: boolean;
   autosave: RealNoteAutosave | null;
   writeAccess: boolean;
   saveError: string | null;
@@ -365,8 +373,11 @@ function hasUnsavedRealChanges(): boolean {
   }
 
   return (
-    mainEditor.state.doc.toString() !==
-    realFileSession.autosave?.persistedSnapshot.content
+    mainEditor.state.doc.sliceString(
+      0,
+      undefined,
+      realFileSession.lineSeparator
+    ) !== realFileSession.autosave?.persistedSnapshot.content
   );
 }
 
@@ -456,7 +467,9 @@ async function saveActiveRealFile(): Promise<boolean> {
   const autosave = session?.autosave;
   if (!session?.editing || !autosave || savingRealFile) return false;
 
-  autosave.request(mainEditor.state.doc.toString());
+  autosave.request(
+    mainEditor.state.doc.sliceString(0, undefined, session.lineSeparator)
+  );
   autosave.suspend();
   const alreadySaving = autosave.saving;
 
@@ -619,7 +632,18 @@ editRealFileButton.addEventListener('click', async () => {
     return;
   }
 
-  const markdown = mainEditor.state.doc.toString();
+  if (session.mixedLineEndings) {
+    window.alert(MIXED_LINE_ENDINGS_MESSAGE);
+    return;
+  }
+
+  // Text.toString() always uses LF. Serialize with the file's separator so
+  // the coordinator baseline and repository guard describe the actual disk.
+  const markdown = mainEditor.state.doc.sliceString(
+    0,
+    undefined,
+    session.lineSeparator
+  );
 
   session.editing = true;
   const { repository, name, uri } = session;
@@ -1011,10 +1035,19 @@ function openRealNoteInEditor(
   realFileSession?.autosave?.dispose();
   mainEditor.setState(previewState);
 
+  const lineSeparator = selected.content.match(/\r\n?|\n/)?.[0] ?? '\n';
+  // A single separator cannot reconstruct mixed endings after CodeMirror parsing.
+  // Keep the existing read-only state instead of constructing a lossy baseline.
+  const mixedLineEndings =
+    previewState.doc.sliceString(0, undefined, lineSeparator) !==
+    selected.content;
+
   realFileSession = {
     repository,
     name: selected.name,
     uri: realNoteUri,
+    lineSeparator,
+    mixedLineEndings,
     autosave: null,
     writeAccess: false,
     saveError: null,
@@ -1022,11 +1055,16 @@ function openRealNoteInEditor(
   };
   updateExplorerActiveFile();
 
-  editRealFileButton.style.display = 'inline-block';
+  editRealFileButton.style.display = mixedLineEndings ? 'none' : 'inline-block';
   saveRealFileButton.style.display = 'none';
   returnButton.style.display = 'inline-block';
 
-  renderNoteHeader(selected.name, 'Read only · choose Edit Real File to edit');
+  renderNoteHeader(
+    selected.name,
+    mixedLineEndings
+      ? MIXED_LINE_ENDINGS_MESSAGE
+      : 'Read only · choose Edit Real File to edit'
+  );
 
   console.log('[MVP Real Note Opened]', {
     file: selected.name,
