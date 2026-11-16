@@ -126,4 +126,27 @@ Written for people new to Foam who may not be technical. Show how to use a featu
 
 ## Foam Editor context
 
-For Foam Editor work in `experiments/codemirror6-poc/`, read [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md) for approved product direction and [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for checkpoint evidence and the next action. These documents supplement the repository rules above.
+For Foam Editor development in `experiments/codemirror6-poc/`, use the following shared project documents:
+
+- [Product Plan](docs/PRODUCT_PLAN.md) — Approved V3 product vision and scope.
+- [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) — Milestones M1–M8, tasks, dependencies and checkpoints.
+- [Obsidian Feature Matrix](docs/OBSIDIAN_FEATURE_MATRIX.md) — Feature parity targets, priorities and current gaps.
+- [Project Status](docs/PROJECT_STATUS.md) — Latest verified progress, Git checkpoints, known limitations and immediate next action.
+- [QA Acceptance](docs/QA_ACCEPTANCE.md) — Test scenarios and acceptance criteria.
+
+### Approved V3 scope
+
+The project prioritizes an Obsidian-like Markdown editing experience, including Live Preview, Source Mode, Reading View, Markdown editing interactions, workspace UI, tabs, split views, and Foam Core features such as Wikilinks, Autocomplete, Backlinks and Graph.
+
+PDF extraction/splitting, OCR, legal/regulation document management, and legal-specific dashboards are explicitly **out of scope**.
+
+### Working rules
+
+- Read the relevant V3 documents before implementing a task.
+- Check actual source code and Git state; do not assume documentation proves implementation.
+- Preserve existing working features and all data-loss/conflict protections.
+- Follow one approved roadmap step at a time.
+- Do not expand task scope or begin later milestones without approval.
+- Never modify, stage or revert the user's local `.vscode/launch.json`.
+- Do not stage, commit or push without explicit authorization.
+- Keep existing repository rules above in effect.
