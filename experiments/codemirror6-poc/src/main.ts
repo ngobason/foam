@@ -453,6 +453,47 @@ function resumeRealFileAutosave(session: RealFileSession | null): void {
     session.autosave?.resume();
 }
 
+// Shared UI adapter for automatic navigation; persistence stays in the coordinator.
+function realNoteAutoSaveNavigation(
+  session: RealFileSession | null,
+  workspace: ActiveRealWorkspace | null,
+  checkpointEditor: () => void
+) {
+  return {
+    isSaving: isSavingRealFile,
+    preflightWriteAccess: () =>
+      session?.editing && session.autosave
+        ? session.writeAccess
+          ? Promise.resolve(true)
+          : requestRealFileWriteAccess(session)
+        : Promise.resolve(false),
+    flush: async () => {
+      const autosave = session?.autosave;
+      if (!session?.editing || !autosave) return false;
+      autosave.request(
+        mainEditor.state.doc.sliceString(0, undefined, session.lineSeparator)
+      );
+      let saved = true;
+      try {
+        await autosave.flush();
+      } catch {
+        saved = false;
+      }
+      if (
+        realFileSession !== session ||
+        activeRealWorkspace !== workspace ||
+        mainEditor.state.facet(noteUriFacet)?.toString() !==
+          session.uri.toString() ||
+        isSavingRealFile()
+      )
+        return false;
+      // Include edits made during flush in both success and failure decisions.
+      checkpointEditor();
+      return saved && !hasUnsavedRealChanges() && !autosave.needsSync;
+    },
+  };
+}
+
 const saveRealFileButton = document.createElement('button');
 
 saveRealFileButton.type = 'button';
@@ -760,7 +801,7 @@ function returnToSample(discardApproved = false): boolean {
 returnButton.addEventListener('click', async () => {
   if (followingRealWikilink || openingExplorerFile || switchingWorkspace)
     return;
-  if (isSavingRealFile()) {
+  if (isSavingRealFile() && !realFileSession?.autosave?.saving) {
     window.alert('Please wait until saving finishes.');
     return;
   }
@@ -768,22 +809,24 @@ returnButton.addEventListener('click', async () => {
   if (!sampleState) return;
   const session = realFileSession;
   const workspace = activeRealWorkspace;
-  const sourceState = mainEditor.state;
+  let sourceState = mainEditor.state;
   openingExplorerFile = true;
   session?.autosave?.suspend();
   try {
-    const target = await prepareRealNoteNavigation({
+    const target = await prepareRealNoteNavigationWithAutoSave({
       readTarget: async () => sampleState,
       isCurrent: () =>
         realFileSession === session &&
         activeRealWorkspace === workspace &&
         mainEditor.state === sourceState &&
         savedSampleState === sampleState &&
-        !isSavingRealFile() &&
         !switchingWorkspace,
       hasUnsavedChanges: hasUnsavedRealChanges,
       needsSync: () => session?.autosave?.needsSync ?? false,
       askDecision: () => askWorkspaceSwitchDecision('returning to Sample'),
+      ...realNoteAutoSaveNavigation(session, workspace, () => {
+        sourceState = mainEditor.state;
+      }),
     });
     if (target) returnToSample(true);
   } finally {
@@ -825,7 +868,11 @@ let openingExplorerFile = false;
 let explorerRepository: BrowserNoteRepository | null = null;
 
 function canNavigateRealNote(): boolean {
-  if (isSavingRealFile() || openingExplorerFile || switchingWorkspace) {
+  if (
+    (isSavingRealFile() && !realFileSession?.autosave?.saving) ||
+    openingExplorerFile ||
+    switchingWorkspace
+  ) {
     window.alert('Please wait until the current file operation finishes.');
     return false;
   }
@@ -865,22 +912,25 @@ async function openRealWikilink(targetUri: URI): Promise<void> {
   openingExplorerFile = true;
   followingRealWikilink = true;
   session.autosave?.suspend();
-  const sourceState = mainEditor.state;
+  let sourceState = mainEditor.state;
 
   try {
     const name = targetUri.path.slice('/real-notes/'.length);
-    const latestNote = await prepareRealNoteNavigation({
+    const latestNote = await prepareRealNoteNavigationWithAutoSave({
       // Read an existing file before offering any data-loss decision.
       readTarget: () => workspace.repository.readMarkdownNote(name),
       isCurrent: () =>
         activeRealWorkspace === workspace &&
         realFileSession === session &&
         mainEditor.state === sourceState &&
-        !isSavingRealFile() &&
+        workspace.adapter.getNote(targetUri)?.type === 'note' &&
         !switchingWorkspace,
       hasUnsavedChanges: hasUnsavedRealChanges,
       needsSync: () => session.autosave?.needsSync ?? false,
       askDecision: () => askWorkspaceSwitchDecision('following this Wikilink'),
+      ...realNoteAutoSaveNavigation(session, workspace, () => {
+        sourceState = mainEditor.state;
+      }),
     });
 
     if (latestNote) {
@@ -956,42 +1006,9 @@ async function openExplorerNote(
     const latestNote = automaticSave
       ? await prepareRealNoteNavigationWithAutoSave({
           ...navigation,
-          isSaving: isSavingRealFile,
-          preflightWriteAccess: () =>
-            session?.editing && session.autosave
-              ? session.writeAccess
-                ? Promise.resolve(true)
-                : requestRealFileWriteAccess(session)
-              : Promise.resolve(false),
-          flush: async () => {
-            const autosave = session?.autosave;
-            if (!session?.editing || !autosave) return false;
-            autosave.request(
-              mainEditor.state.doc.sliceString(
-                0,
-                undefined,
-                session.lineSeparator
-              )
-            );
-            let saved = true;
-            try {
-              await autosave.flush();
-            } catch {
-              saved = false;
-            }
-            if (
-              realFileSession !== session ||
-              activeRealWorkspace !== workspace ||
-              mainEditor.state.facet(noteUriFacet)?.toString() !==
-                session.uri.toString() ||
-              isSavingRealFile()
-            )
-              return false;
-            // Checkpoint edits made during our flush. Success requires them persisted;
-            // on failure the shared fallback must ask about this newer draft instead.
+          ...realNoteAutoSaveNavigation(session, workspace, () => {
             sourceState = mainEditor.state;
-            return saved && !hasUnsavedRealChanges() && !autosave.needsSync;
-          },
+          }),
         })
       : await prepareRealNoteNavigation(navigation);
     if (!latestNote) return false;

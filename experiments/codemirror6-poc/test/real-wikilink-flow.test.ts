@@ -10,7 +10,10 @@ import {
 } from '@codemirror/state';
 import { history, undo, redo } from '@codemirror/commands';
 import { FoamGraph, URI } from '@foam/core';
-import { realLinkNavigationContext } from '../src/internal-link-navigation';
+import {
+  handleInternalLinkClick,
+  realLinkNavigationContext,
+} from '../src/internal-link-navigation';
 import { noteUriFacet } from '../src/note-context';
 import { BrowserNoteRepository } from '../src/browser-note-repository';
 
@@ -324,7 +327,8 @@ describe('real Wikilink dialog and safe save wiring', () => {
   it.each(['Save', 'Discard', 'Cancel'])(
     '%s preserves the intended disk and Core state',
     async decision => {
-      const { files, write, state, context, adapter } = await openWorkspace();
+      const { files, write, state, context, adapter, requestPermission } =
+        await openWorkspace(true, 'denied');
       const original = files.get('A.md');
       const graph = FoamGraph.fromWorkspace(adapter.workspace, true);
       const originalLinks = graph.getLinks(URI.file('/real-notes/A.md')).length;
@@ -336,6 +340,7 @@ describe('real Wikilink dialog and safe save wiring', () => {
       await button('Return to Sample').click();
       await button('List Markdown Notes').click();
       expect(editor().state).toBe(state);
+      requestPermission.mockResolvedValue('granted');
       await dialogButton(decision).click();
       await vi.waitFor(() => expect(context.canNavigate()).toBe(true));
       if (decision === 'Cancel') {
@@ -371,12 +376,14 @@ describe('real Wikilink dialog and safe save wiring', () => {
   it.each(['conflict', 'I/O'])(
     'keeps the dialog and editor after Save %s failure',
     async failure => {
-      const { files, write, state, context, adapter } = await openWorkspace();
+      const { files, write, state, context, adapter, requestPermission } =
+        await openWorkspace(true, 'denied');
       const original = files.get('A.md');
       if (failure === 'conflict') files.set('A.md', 'External changes');
       else write.mockRejectedValueOnce(new Error('Disk write failed'));
       context.openNote(URI.file('/real-notes/B.md'));
       await waitForDialog();
+      requestPermission.mockResolvedValue('granted');
       await dialogButton('Save').click();
       expect(editor().state).toBe(state);
       expect(browser.dialogs.at(-1)!.isConnected).toBe(true);
@@ -420,7 +427,10 @@ describe('real Wikilink dialog and safe save wiring', () => {
   });
 
   it('ignores repeated clicks during Save and waits for disk completion', async () => {
-    const { context, write, state } = await openWorkspace();
+    const { context, write, state, requestPermission } = await openWorkspace(
+      true,
+      'denied'
+    );
     let finishWrite!: () => void;
     write.mockImplementationOnce(
       () =>
@@ -430,6 +440,7 @@ describe('real Wikilink dialog and safe save wiring', () => {
     );
     context.openNote(URI.file('/real-notes/B.md'));
     await waitForDialog();
+    requestPermission.mockResolvedValue('granted');
     const saving = dialogButton('Save').click();
     await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
     context.openNote(URI.file('/real-notes/B.md'));
@@ -482,6 +493,461 @@ const pickerOpenNote = (name: string) => {
     element => element.textContent === 'Open in CodeMirror'
   )!;
 };
+
+function clickRealWikilink(raw = '[[B', modifier = 'ctrlKey') {
+  class ClickNode {}
+  vi.stubGlobal('Node', ClickNode);
+  return handleInternalLinkClick(
+    {
+      button: 0,
+      ctrlKey: modifier === 'ctrlKey',
+      metaKey: modifier === 'metaKey',
+      target: new ClickNode(),
+      preventDefault: vi.fn(),
+    } as unknown as MouseEvent,
+    {
+      state: editor().state,
+      contentDOM: { contains: () => true },
+      posAtCoords: () => editor().state.doc.toString().indexOf(raw) + 2,
+    } as unknown as CodeMirrorView
+  );
+}
+
+describe.each(['Wikilink', 'Sample'])('%s T2b automatic navigation', path => {
+  const navigate = (raw = '[[B', modifier = 'ctrlKey') => {
+    if (path === 'Sample') return button('Return to Sample').click();
+    clickRealWikilink(raw, modifier);
+    return Promise.resolve();
+  };
+  const targetPath =
+    path === 'Sample' ? '/notes/Welcome.md' : '/real-notes/B.md';
+
+  it('flushes pending edits and Core before leaving without a dialog or redundant permission request', async () => {
+    const { files, write, adapter, requestPermission } = await openWorkspace(
+      false
+    );
+    vi.useFakeTimers();
+    requestPermission.mockClear();
+    const count = browser.dialogs.length;
+    editText('T2b pending [[B|Label]]');
+    const leaving = navigate();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+    await leaving;
+    expect(files.get('A.md')).toBe('T2b pending [[B|Label]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+      files.get('A.md')
+    );
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(browser.dialogs).toHaveLength(count);
+    expect(browser.storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('requests fresh permission in the original click before target reads', async () => {
+    const { requestPermission, read } = await openWorkspace(false, 'denied');
+    vi.useFakeTimers();
+    editText('Need access [[B]]');
+    requestPermission.mockClear();
+    read.mockClear();
+    requestPermission.mockResolvedValue('granted');
+    const leaving = navigate();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    await leaving;
+    expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+  });
+
+  it('awaits manual Save and drains newer edits before replacing the source', async () => {
+    const { files, write, adapter, requestPermission } = await openWorkspace(
+      false
+    );
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    write.mockImplementationOnce(async (name, content) => {
+      await gate.promise;
+      files.set(name, content);
+    });
+    editText('Snapshot [[B]]');
+    await button('Save Real File').click();
+    await vi.advanceTimersByTimeAsync(0);
+    editText('Newer [[B]]');
+    requestPermission.mockClear();
+    const leaving = navigate();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+      expect(write).toHaveBeenCalledTimes(1);
+      editText('Latest [[B]]');
+    } finally {
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await leaving;
+    expect(files.get('A.md')).toBe('Latest [[B]]');
+    expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe('Latest [[B]]');
+    expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('leaves clean sources without writes, permission requests or a dialog', async () => {
+    const { write, requestPermission } = await openWorkspace(false);
+    vi.useFakeTimers();
+    requestPermission.mockClear();
+    const count = browser.dialogs.length;
+    const leaving = navigate();
+    await vi.advanceTimersByTimeAsync(0);
+    await leaving;
+    expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+    expect(write).not.toHaveBeenCalled();
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(browser.dialogs).toHaveLength(count);
+  });
+
+  it.each(['\n', '\r\n'])(
+    'preserves %j source line endings and aliases',
+    async separator => {
+      const { files, write, adapter } = await openWorkspace(false);
+      files.set('A.md', ['# A', '[[B|Label]]'].join(separator));
+      await explorerFile('A.md').click();
+      await button('Edit Real File').click();
+      vi.useFakeTimers();
+      editText('# Edited\n[[B|Label]]');
+      const leaving = navigate('[[B', 'metaKey');
+      await vi.advanceTimersByTimeAsync(0);
+      await leaving;
+      const content = ['# Edited', '[[B|Label]]'].join(separator);
+      expect(files.get('A.md')).toBe(content);
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(content);
+      expect(write).toHaveBeenCalledExactlyOnceWith('A.md', content);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+    }
+  );
+
+  it.each(['conflict', 'I/O', 'Core'])(
+    'preserves the source on %s failure and uses safe fallback',
+    async failure => {
+      const { files, write, adapter } = await openWorkspace(false);
+      vi.useFakeTimers();
+      const original = files.get('A.md');
+      editText('Fallback draft [[B]]');
+      const source = editor().state;
+      if (failure === 'conflict') files.set('A.md', 'External A');
+      if (failure === 'I/O')
+        write.mockRejectedValueOnce(new Error('I/O failure'));
+      if (failure === 'Core')
+        vi.spyOn(adapter, 'updateNote').mockImplementationOnce(() => {
+          throw new Error('Core failure');
+        });
+      const leaving = navigate();
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(editor().state).toBe(source);
+      expect(files.get('A.md')).toBe(
+        failure === 'Core'
+          ? 'Fallback draft [[B]]'
+          : failure === 'conflict'
+          ? 'External A'
+          : original
+      );
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(original);
+      await dialogButton('Save').click();
+      if (failure === 'conflict') {
+        expect(editor().state).toBe(source);
+        expect(write).not.toHaveBeenCalled();
+        await dialogButton('Cancel').click();
+        await leaving;
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(files.get('A.md')).toBe('External A');
+      } else {
+        await vi.advanceTimersByTimeAsync(0);
+        await leaving;
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+        expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+          'Fallback draft [[B]]'
+        );
+        expect(write).toHaveBeenCalledTimes(failure === 'Core' ? 1 : 2);
+      }
+    }
+  );
+
+  it('keeps denied drafts on Cancel, permits a manual retry and resumes later Auto-save', async () => {
+    const { files, write, requestPermission } = await openWorkspace(
+      false,
+      'denied'
+    );
+    vi.useFakeTimers();
+    editText('Denied [[B]]');
+    const source = editor().state;
+    const original = files.get('A.md');
+    const leaving = navigate();
+    await vi.advanceTimersByTimeAsync(0);
+    await waitForDialog();
+    await dialogButton('Cancel').click();
+    await leaving;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(editor().state).toBe(source);
+    expect(files.get('A.md')).toBe(original);
+    expect(write).not.toHaveBeenCalled();
+    expect(requestPermission).toHaveBeenCalledTimes(2);
+    requestPermission.mockResolvedValue('granted');
+    await button('Save Real File').click();
+    await vi.advanceTimersByTimeAsync(0);
+    editText('After retry [[B]]');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(files.get('A.md')).toBe('After retry [[B]]');
+    expect(requestPermission).toHaveBeenCalledTimes(3);
+    const retry = navigate();
+    await vi.advanceTimersByTimeAsync(0);
+    await retry;
+    expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+  });
+
+  it('falls back after revocation and retries only from a Save gesture', async () => {
+    const { files, createWritable, requestPermission } = await openWorkspace(
+      false
+    );
+    vi.useFakeTimers();
+    editText('Revoked [[B]]');
+    const source = editor().state;
+    createWritable.mockRejectedValueOnce(
+      new DOMException('Revoked', 'NotAllowedError')
+    );
+    requestPermission.mockClear();
+    const leaving = navigate();
+    await vi.advanceTimersByTimeAsync(0);
+    await waitForDialog();
+    expect(editor().state).toBe(source);
+    expect(requestPermission).not.toHaveBeenCalled();
+    await dialogButton('Save').click();
+    await vi.advanceTimersByTimeAsync(0);
+    await leaving;
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(files.get('A.md')).toBe('Revoked [[B]]');
+    expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+  });
+
+  it.each(['active write', 'next revision'])(
+    'EDGE-GATE preserves newer edits when permission fails during %s',
+    async failureAt => {
+      const { files, write, adapter, createWritable, requestPermission } =
+        await openWorkspace(false);
+      vi.useFakeTimers();
+      const original = files.get('A.md');
+      const gate = pendingWrite();
+      const revoked = new DOMException('Permission revoked', 'NotAllowedError');
+      write.mockImplementationOnce(async (name, content) => {
+        await gate.promise;
+        if (failureAt === 'active write') throw revoked;
+        files.set(name, content);
+      });
+      editText('In-flight snapshot [[B]]');
+      await vi.advanceTimersByTimeAsync(750);
+      expect(write).toHaveBeenCalledTimes(1);
+      if (failureAt === 'next revision')
+        createWritable.mockRejectedValueOnce(revoked);
+      requestPermission.mockClear();
+      requestPermission.mockResolvedValue('denied');
+      editText('Newer pending [[B]]');
+      const leaving = navigate();
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        editText('Latest race draft [[B]]');
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(
+          '/real-notes/A.md'
+        );
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(requestPermission).not.toHaveBeenCalled();
+      } finally {
+        gate.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      await waitForDialog();
+      const source = editor().state;
+      const baseline =
+        failureAt === 'active write' ? original : 'In-flight snapshot [[B]]';
+      expect(source.doc.toString()).toBe('Latest race draft [[B]]');
+      expect(files.get('A.md')).toBe(baseline);
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(baseline);
+      expect(requestPermission).not.toHaveBeenCalled();
+      await dialogButton('Cancel').click();
+      await leaving;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(editor().state).toBe(source);
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(requestPermission).not.toHaveBeenCalled();
+
+      // Revocation invalidated cached access. The next request must start
+      // synchronously inside the navigation click, not after a read or timer.
+      let inGesture = true;
+      requestPermission.mockImplementation(async () => {
+        expect(inGesture).toBe(true);
+        return 'denied';
+      });
+      const retry = navigate();
+      inGesture = false;
+      expect(requestPermission).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(editor().state).toBe(source);
+      expect(files.get('A.md')).toBe(baseline);
+      expect(write).toHaveBeenCalledTimes(1);
+      requestPermission.mockImplementation(async () => {
+        expect(inGesture).toBe(true);
+        return 'granted';
+      });
+      inGesture = true;
+      const saving = dialogButton('Save').click();
+      inGesture = false;
+      expect(requestPermission).toHaveBeenCalledTimes(2);
+      await saving;
+      await vi.advanceTimersByTimeAsync(0);
+      await retry;
+      expect(editor().state.facet(noteUriFacet)?.path).toBe(targetPath);
+      expect(files.get('A.md')).toBe('Latest race draft [[B]]');
+      expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+        'Latest race draft [[B]]'
+      );
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(createWritable).toHaveBeenCalledTimes(
+        failureAt === 'active write' ? 2 : 3
+      );
+      expect(browser.storage.setItem).not.toHaveBeenCalled();
+    }
+  );
+
+  it('leaves mixed-line-ending read-only notes without requesting permission', async () => {
+    const { files, write, requestPermission } = await openWorkspace(false);
+    files.set('B.md', '# B\r\nMixed\n[[A]]');
+    await explorerFile('B.md').click();
+    vi.useFakeTimers();
+    requestPermission.mockClear();
+    const leaving = navigate('[[A');
+    await vi.advanceTimersByTimeAsync(0);
+    await leaving;
+    expect(editor().state.facet(noteUriFacet)?.path).toBe(
+      path === 'Wikilink' ? '/real-notes/A.md' : targetPath
+    );
+    expect(files.get('B.md')).toBe('# B\r\nMixed\n[[A]]');
+    expect(write).not.toHaveBeenCalled();
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale source state during permission preflight and resumes the newer draft', async () => {
+    const { files, requestPermission } = await openWorkspace(false, 'denied');
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    requestPermission.mockImplementationOnce(async () => {
+      await gate.promise;
+      return 'granted';
+    });
+    editText('Before access [[B]]');
+    const leaving = navigate();
+    editText('Changed during access [[B]]');
+    const newer = editor().state;
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await leaving;
+    expect(editor().state).toBe(newer);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    await vi.advanceTimersByTimeAsync(750);
+    expect(files.get('A.md')).toBe('Changed during access [[B]]');
+  });
+
+  it('writes subsequent Sample edits only to localStorage', async () => {
+    const { files, write } = await openWorkspace(false);
+    vi.useFakeTimers();
+    editText('Real file before Sample [[B]]');
+    const leaving = navigate();
+    await vi.advanceTimersByTimeAsync(0);
+    await leaving;
+    if (path === 'Wikilink') await button('Return to Sample').click();
+    const content = editor().state.doc.toString() + '\nSample-only edit';
+    editText(content);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(write).toHaveBeenCalledExactlyOnceWith(
+      'A.md',
+      'Real file before Sample [[B]]'
+    );
+    expect(files.get('B.md')).toBe('# B');
+    expect(browser.storage.setItem).toHaveBeenCalledWith(
+      'foam-editor-poc-note:file:///notes/Welcome.md',
+      content
+    );
+  });
+});
+
+describe('T2b Wikilink target guards', () => {
+  it.each(['[[Missing]]', '[[B#Heading]]', '[B](B.md)'])(
+    'does not save or request permission for unresolved/unsupported %s',
+    async markdown => {
+      const { write, requestPermission } = await openWorkspace(false, 'denied');
+      vi.useFakeTimers();
+      editText(markdown);
+      const source = editor().state;
+      requestPermission.mockClear();
+      clickRealWikilink(markdown);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(editor().state).toBe(source);
+      expect(write).not.toHaveBeenCalled();
+      expect(requestPermission).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['missing', 'newer draft', 'changed target'])(
+    'revalidates a target after successful flush: %s',
+    async change => {
+      const { files, write, read, adapter } = await openWorkspace(false);
+      vi.useFakeTimers();
+      const gate = pendingWrite();
+      const readFile = read.getMockImplementation()!;
+      let targetReads = 0;
+      read.mockImplementation(async name => {
+        if (name === 'B.md' && ++targetReads === 2) await gate.promise;
+        return readFile(name);
+      });
+      write.mockImplementationOnce(async (name, content) => {
+        files.set(name, content);
+        if (change === 'missing') files.delete('B.md');
+      });
+      editText('Flushed before re-read [[B]]');
+      const source = editor().state;
+      clickRealWikilink();
+      await vi.advanceTimersByTimeAsync(0);
+      try {
+        expect(files.get('A.md')).toBe('Flushed before re-read [[B]]');
+        expect(adapter.readNote(URI.file('/real-notes/A.md'))).toBe(
+          files.get('A.md')
+        );
+        if (change === 'newer draft') editText('Newer after flush [[B]]');
+        if (change === 'changed target') files.set('B.md', '# Current B');
+      } finally {
+        gate.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      if (change === 'changed target') {
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(
+          '/real-notes/B.md'
+        );
+        expect(editor().state.doc.toString()).toBe('# Current B');
+      } else {
+        expect(editor().state.facet(noteUriFacet)?.path).toBe(
+          '/real-notes/A.md'
+        );
+        if (change === 'missing') {
+          expect(editor().state).toBe(source);
+          expect(browser.window.alert).toHaveBeenCalledWith('File not found');
+          editText('Still active after missing target [[B]]');
+        }
+        const draft = editor().state.doc.toString();
+        await vi.advanceTimersByTimeAsync(750);
+        expect(files.get('A.md')).toBe(draft);
+      }
+    }
+  );
+});
 
 describe('Explorer automatic save-before-navigation', () => {
   it('reuses already-granted write access instead of requesting it again', async () => {
@@ -973,7 +1439,8 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
   it.each(['Save', 'Discard', 'Cancel'])(
     '%s preserves disk, draft and Core as chosen',
     async decision => {
-      const { files, write, adapter, context } = await openWorkspace(false);
+      const { files, write, adapter, context, requestPermission } =
+        await openWorkspace(false, path === 'Sample' ? 'denied' : 'granted');
       vi.useFakeTimers();
       const original = files.get('A.md');
       editText('Pending [[B]]');
@@ -986,6 +1453,7 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
       expect(editor().state).toBe(source);
       expect(write).not.toHaveBeenCalled();
       expect(context.canNavigate()).toBe(false);
+      requestPermission.mockResolvedValue('granted');
       await dialogButton(decision).click();
       await leaving;
       expect(files.get('A.md')).toBe(
@@ -998,6 +1466,7 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
       expect(browser.storage.setItem).not.toHaveBeenCalled();
       if (decision === 'Cancel') {
         expect(editor().state).toBe(source);
+        if (path === 'Sample') await button('Save Real File').click();
         await vi.advanceTimersByTimeAsync(750);
         expect(files.get('A.md')).toBe('Pending [[B]]');
       } else {
@@ -1013,7 +1482,10 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
   it.each(['I/O', 'conflict', 'permission'])(
     'preserves the draft after Save %s failure and allows retry or Cancel',
     async failure => {
-      const { files, write, requestPermission } = await openWorkspace(false);
+      const { files, write, requestPermission } = await openWorkspace(
+        false,
+        path === 'Sample' ? 'denied' : 'granted'
+      );
       vi.useFakeTimers();
       editText('Keep draft [[B]]');
       const source = editor().state;
@@ -1025,6 +1497,8 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
       const leaving = navigationButton().click();
       await vi.advanceTimersByTimeAsync(0);
       await waitForDialog();
+      if (failure !== 'permission')
+        requestPermission.mockResolvedValue('granted');
       await dialogButton('Save').click();
       expect(editor().state).toBe(source);
       expect(browser.dialogs.at(-1)!.isConnected).toBe(true);
@@ -1050,7 +1524,8 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
   );
 
   it('does not navigate or dispose while the dialog Save is writing', async () => {
-    const { files, write, adapter, context } = await openWorkspace(false);
+    const { files, write, adapter, context, requestPermission } =
+      await openWorkspace(false, path === 'Sample' ? 'denied' : 'granted');
     vi.useFakeTimers();
     editText('Slow save [[B]]');
     const source = editor().state;
@@ -1062,6 +1537,7 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
     const leaving = navigationButton().click();
     await vi.advanceTimersByTimeAsync(0);
     await waitForDialog();
+    requestPermission.mockResolvedValue('granted');
     const saving = dialogButton('Save').click();
     await vi.advanceTimersByTimeAsync(0);
     expect(write).toHaveBeenCalledTimes(1);
@@ -1082,7 +1558,10 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
   });
 
   it('does not apply an old Discard decision to a newer editor state', async () => {
-    const { files } = await openWorkspace(false);
+    const { files, requestPermission } = await openWorkspace(
+      false,
+      path === 'Sample' ? 'denied' : 'granted'
+    );
     vi.useFakeTimers();
     editText('Old draft [[B]]');
     const leaving = navigationButton().click();
@@ -1093,6 +1572,10 @@ describe.each(['Picker', 'Sample'])('%s safe fallback', path => {
     await dialogButton('Discard').click();
     await leaving;
     expect(editor().state).toBe(newer);
+    if (path === 'Sample') {
+      requestPermission.mockResolvedValue('granted');
+      await button('Save Real File').click();
+    }
     await vi.advanceTimersByTimeAsync(750);
     expect(files.get('A.md')).toBe('Newer draft [[B]]');
   });
@@ -1532,9 +2015,14 @@ describe('real-file auto-save integration', () => {
       false
     );
     vi.useFakeTimers();
-    const sync = vi.spyOn(adapter, 'updateNote').mockImplementationOnce(() => {
-      throw new Error('Core unavailable');
-    });
+    const sync = vi
+      .spyOn(adapter, 'updateNote')
+      .mockImplementationOnce(() => {
+        throw new Error('Core unavailable');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('Core still unavailable during automatic navigation');
+      });
     editText('Persisted [[B]]');
     await vi.advanceTimersByTimeAsync(750);
     expect(files.get('A.md')).toBe('Persisted [[B]]');
@@ -1549,7 +2037,7 @@ describe('real-file auto-save integration', () => {
     await leaving;
     expect(editor().state).toBe(source);
     await vi.advanceTimersByTimeAsync(5000);
-    expect(sync).toHaveBeenCalledTimes(1);
+    expect(sync).toHaveBeenCalledTimes(2);
     await button('Save Real File').click();
     await vi.advanceTimersByTimeAsync(0);
     expect(write).toHaveBeenCalledTimes(1);
@@ -1562,10 +2050,10 @@ describe('real-file auto-save integration', () => {
     );
   });
 
-  it.each(['Wikilink', 'Picker', 'Workspace', 'Sample'])(
+  it.each(['Picker', 'Workspace'])(
     'blocks %s departure during an in-flight save',
     async path => {
-      const { files, write, context } = await openWorkspace(false);
+      const { files, write } = await openWorkspace(false);
       vi.useFakeTimers();
       const gate = pendingWrite();
       write.mockImplementationOnce(async (name, content) => {
@@ -1575,10 +2063,8 @@ describe('real-file auto-save integration', () => {
       editText('B [[B]]');
       await vi.advanceTimersByTimeAsync(750);
       const source = editor().state;
-      if (path === 'Wikilink') context.openNote(URI.file('/real-notes/B.md'));
       if (path === 'Picker') await pickerOpenNote('B.md').click();
       if (path === 'Workspace') await button('List Markdown Notes').click();
-      if (path === 'Sample') await button('Return to Sample').click();
       await vi.advanceTimersByTimeAsync(0);
       expect(editor().state).toBe(source);
       expect(browser.window.alert).toHaveBeenCalledWith(
@@ -1594,7 +2080,10 @@ describe('real-file auto-save integration', () => {
   it.each(['Wikilink', 'Picker', 'Workspace', 'Sample'])(
     '%s departure cancels a pending timer only after explicit discard',
     async path => {
-      const { files, write, context } = await openWorkspace(false);
+      const { files, write, context } = await openWorkspace(
+        false,
+        path === 'Wikilink' || path === 'Sample' ? 'denied' : 'granted'
+      );
       vi.useFakeTimers();
       const original = files.get('A.md');
       editText('Discarded [[B]]');
@@ -1619,8 +2108,11 @@ describe('real-file auto-save integration', () => {
     }
   );
 
-  it('Cancel resumes pending auto-save without replacing the source note', async () => {
-    const { files, write, context } = await openWorkspace(false);
+  it('Cancel keeps the source and Auto-save resumes after an explicit permission retry', async () => {
+    const { files, write, context, requestPermission } = await openWorkspace(
+      false,
+      'denied'
+    );
     vi.useFakeTimers();
     editText('Keep [[B]]');
     context.openNote(URI.file('/real-notes/B.md'));
@@ -1631,6 +2123,8 @@ describe('real-file auto-save integration', () => {
     await dialogButton('Cancel').click();
     await vi.advanceTimersByTimeAsync(0);
     expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+    requestPermission.mockResolvedValue('granted');
+    await button('Save Real File').click();
     await vi.advanceTimersByTimeAsync(750);
     expect(files.get('A.md')).toBe('Keep [[B]]');
   });
@@ -1658,7 +2152,7 @@ describe('real-file auto-save integration', () => {
   });
 
   it('keeps sample editing in localStorage after leaving a real session', async () => {
-    const { write } = await openWorkspace(false);
+    const { write } = await openWorkspace(false, 'denied');
     vi.useFakeTimers();
     editText('Discard me');
     const leaving = button('Return to Sample').click();
