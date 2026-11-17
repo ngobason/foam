@@ -1176,7 +1176,7 @@ function openRealNoteInEditor(
   return true;
 }
 
-// Temporary button to test reading multiple Markdown notes.
+// Choose a Markdown workspace without abandoning the current session on failure.
 const listNotesButton = document.createElement('button');
 
 listNotesButton.type = 'button';
@@ -1186,8 +1186,8 @@ listNotesButton.title = 'Choose a folder and browse its Markdown notes';
 document.querySelector('.workspace-actions')?.appendChild(listNotesButton);
 
 listNotesButton.addEventListener('click', async () => {
-  // Prevent changing workspace while saving.
-  if (isSavingRealFile()) {
+  // Coordinator-owned writes may be drained after the folder is selected.
+  if (isSavingRealFile() && !realFileSession?.autosave?.saving) {
     window.alert('Please wait until saving finishes.');
     return;
   }
@@ -1204,6 +1204,19 @@ listNotesButton.addEventListener('click', async () => {
 
   switchingWorkspace = true;
   const sourceSession = realFileSession;
+  const sourceWorkspace = activeRealWorkspace;
+  let sourceState = mainEditor.state;
+  const isCurrent = () =>
+    realFileSession === sourceSession &&
+    activeRealWorkspace === sourceWorkspace &&
+    mainEditor.state === sourceState &&
+    !openingExplorerFile;
+  const assertCurrent = () => {
+    if (!isCurrent())
+      throw new Error(
+        'The current note changed. Workspace switching was cancelled.'
+      );
+  };
   sourceSession?.autosave?.suspend();
 
   try {
@@ -1213,29 +1226,52 @@ listNotesButton.addEventListener('click', async () => {
       console.log('[MVP Note List] Cancelled');
       return;
     }
+    assertCurrent();
 
     let notes = await repository.listMarkdownNotes();
-
-    // Ensure no other file operation is in progress.
-    if (isSavingRealFile() || openingExplorerFile) {
-      window.alert('Please wait for the current operation to finish.');
-      return;
-    }
+    assertCurrent();
 
     let decision: NoteSwitchDecision = 'save';
 
-    // Only prompt after the new folder has been selected
-    // and read successfully.
+    // Only consider persistence after a folder was selected and read successfully.
     if (
-      realFileSession &&
-      (hasUnsavedRealChanges() || realFileSession.autosave?.needsSync)
+      sourceSession &&
+      (hasUnsavedRealChanges() ||
+        sourceSession.autosave?.needsSync ||
+        sourceSession.autosave?.saving)
     ) {
-      decision = await askWorkspaceSwitchDecision();
+      const navigation = realNoteAutoSaveNavigation(
+        sourceSession,
+        sourceWorkspace,
+        () => {
+          sourceState = mainEditor.state;
+        }
+      );
+      // The picker consumed the original gesture. This path must never prompt.
+      let canFlush =
+        !hasUnsavedRealChanges() && !sourceSession.autosave?.saving;
+      if (!canFlush) {
+        const permission = await sourceSession.repository.queryWriteAccess();
+        assertCurrent();
+        canFlush = permission === 'granted';
+        if (permission !== null) sourceSession.writeAccess = canFlush;
+      }
+      const saved = canFlush && (await navigation.flush());
+      assertCurrent();
+      if (
+        !saved &&
+        (hasUnsavedRealChanges() ||
+          sourceSession.autosave?.needsSync ||
+          sourceSession.autosave?.saving)
+      ) {
+        decision = await askWorkspaceSwitchDecision();
+      }
 
       if (decision === 'cancel') {
         console.log('[MVP Workspace Switch] Cancelled');
         return;
       }
+      assertCurrent();
     }
 
     // A successful Save must leave no unsaved changes.
@@ -1253,12 +1289,16 @@ listNotesButton.addEventListener('click', async () => {
       );
       return;
     }
-    const sourceState = mainEditor.state;
     const sourceSnapshot = sourceSession?.autosave?.persistedSnapshot;
 
     // Reload files after a possible Save / Discard decision.
     // This also handles selecting the same folder again.
     notes = await repository.listMarkdownNotes();
+    assertCurrent();
+    if (sourceSession?.autosave?.persistedSnapshot !== sourceSnapshot)
+      throw new Error(
+        'The current note changed. Workspace switching was cancelled.'
+      );
 
     // Prepare the new Foam Core adapter before replacing
     // the currently active workspace.
@@ -1268,14 +1308,19 @@ listNotesButton.addEventListener('click', async () => {
 
     // Create a Graph from the prepared Foam Workspace.
     // Graph will monitor Workspace events.
-    const nextRealFoamGraph = FoamGraph.fromWorkspace(
-      nextRealFoamAdapter.workspace,
-      true
-    );
+    let nextRealFoamGraph: FoamGraph;
+    try {
+      nextRealFoamGraph = FoamGraph.fromWorkspace(
+        nextRealFoamAdapter.workspace,
+        true
+      );
+    } catch (error) {
+      nextRealFoamAdapter.workspace.dispose();
+      throw error;
+    }
 
     if (
-      realFileSession !== sourceSession ||
-      mainEditor.state !== sourceState ||
+      !isCurrent() ||
       sourceSession?.autosave?.persistedSnapshot !== sourceSnapshot
     ) {
       nextRealFoamGraph.dispose();
@@ -1486,6 +1531,9 @@ listNotesButton.addEventListener('click', async () => {
     dialog.showModal();
   } catch (error) {
     console.error('[MVP Note List] Failed:', error);
+    window.alert(
+      error instanceof Error ? error.message : 'Failed to load workspace.'
+    );
   } finally {
     switchingWorkspace = false;
     resumeRealFileAutosave(sourceSession);

@@ -21,7 +21,7 @@ type DirectoryWithEntries = FileSystemDirectoryHandle & {
  * - List Markdown files
  * - Read Markdown content
  *
- * No write operations yet.
+ * - Write existing files with an expected-content conflict guard
  */
 export class BrowserNoteRepository {
   private readonly directory: FileSystemDirectoryHandle;
@@ -81,6 +81,22 @@ export class BrowserNoteRepository {
     notes.sort((a, b) => a.name.localeCompare(b.name));
 
     return notes;
+  }
+
+  /**
+   * Inspect permission without prompting. null means unavailable or uncertain.
+   */
+  async queryWriteAccess(): Promise<PermissionState | null> {
+    const directory = this.directory as FileSystemDirectoryHandle & {
+      queryPermission?: (options: {
+        mode: 'readwrite';
+      }) => Promise<PermissionState>;
+    };
+    try {
+      return (await directory.queryPermission?.({ mode: 'readwrite' })) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /**

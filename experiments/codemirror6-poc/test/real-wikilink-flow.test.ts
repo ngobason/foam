@@ -16,6 +16,7 @@ import {
 } from '../src/internal-link-navigation';
 import { noteUriFacet } from '../src/note-context';
 import { BrowserNoteRepository } from '../src/browser-note-repository';
+import { FoamCoreAdapter } from '../src/foam-core-adapter';
 
 // Exercise main.ts's real dialog, repository, save and navigation wiring.
 // Only the browser UI and EditorView rendering are replaced in this Node test.
@@ -241,7 +242,7 @@ async function openWorkspace(
     close: async () => {},
     abort: async () => {},
   }));
-  browser.window.showDirectoryPicker.mockResolvedValue({
+  const directory = {
     name: 'Test workspace',
     requestPermission,
     async *entries() {
@@ -256,7 +257,8 @@ async function openWorkspace(
         createWritable: () => createWritable(name),
       };
     },
-  });
+  };
+  browser.window.showDirectoryPicker.mockResolvedValue(directory);
   await button('List Markdown Notes').click();
   await browser.elements
     .get('#mvp-file-list')!
@@ -283,6 +285,7 @@ async function openWorkspace(
     context,
     requestPermission,
     createWritable,
+    directory,
     adapter: context.adapter!,
   };
 }
@@ -947,6 +950,375 @@ describe('T2b Wikilink target guards', () => {
       }
     }
   );
+});
+
+describe('T2c conditional workspace switching', () => {
+  const selectNextWorkspace = (
+    source: Awaited<ReturnType<typeof openWorkspace>>,
+    permission: PermissionState | null = 'granted'
+  ) => {
+    const queryPermission = vi.fn(async () => permission as PermissionState);
+    if (permission !== null)
+      Object.assign(source.directory, { queryPermission });
+    const target = { ...source.directory, name: 'Next workspace' };
+    browser.window.showDirectoryPicker.mockResolvedValue(target);
+    return { queryPermission, target };
+  };
+
+  it('automatically persists with already-granted permission after selecting the target folder', async () => {
+    const { directory, files, write, adapter, requestPermission } =
+      await openWorkspace(false);
+    const queryPermission = vi.fn(async () => 'granted' as PermissionState);
+    Object.assign(directory, { queryPermission });
+    const target = { ...directory, name: 'Next workspace' };
+    browser.window.showDirectoryPicker.mockResolvedValue(target);
+    vi.useFakeTimers();
+    editText('Workspace draft [[B]]');
+    requestPermission.mockClear();
+    const count = browser.dialogs.length;
+    const switching = button('List Markdown Notes').click();
+    expect(queryPermission).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(files.get('A.md')).toBe('Workspace draft [[B]]');
+    await switching;
+    expect(queryPermission).toHaveBeenCalledExactlyOnceWith({
+      mode: 'readwrite',
+    });
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(browser.dialogs).toHaveLength(count + 1); // The new Markdown picker only.
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/notes/Welcome.md');
+    await explorerFile('A.md').click();
+    expect(editor().state.doc.toString()).toBe('Workspace draft [[B]]');
+    expect(editor().state.facet(realLinkNavigationContext)?.adapter).not.toBe(
+      adapter
+    );
+  });
+
+  it.each([false, true])(
+    'preserves the source when the folder picker is cancelled; dirty=%s',
+    async dirty => {
+      const { directory, files, write, requestPermission, context } =
+        await openWorkspace(false);
+      const queryPermission = vi.fn(async () => 'granted' as PermissionState);
+      Object.assign(directory, { queryPermission });
+      vi.useFakeTimers();
+      const original = files.get('A.md');
+      if (dirty) editText('Pending before cancel [[B]]');
+      const source = editor().state;
+      const count = browser.dialogs.length;
+      requestPermission.mockClear();
+      browser.window.showDirectoryPicker.mockRejectedValueOnce(
+        new DOMException('Cancelled', 'AbortError')
+      );
+      await button('List Markdown Notes').click();
+      expect(editor().state).toBe(source);
+      expect(editor().state.facet(realLinkNavigationContext)?.adapter).toBe(
+        context.adapter
+      );
+      expect(files.get('A.md')).toBe(original);
+      expect(write).not.toHaveBeenCalled();
+      expect(requestPermission).not.toHaveBeenCalled();
+      expect(queryPermission).not.toHaveBeenCalled();
+      expect(browser.dialogs).toHaveLength(count);
+      if (dirty) {
+        await vi.advanceTimersByTimeAsync(750);
+        expect(files.get('A.md')).toBe('Pending before cancel [[B]]');
+      }
+    }
+  );
+
+  it.each(['Save', 'Discard', 'Cancel'])(
+    'uses %s fallback when permission needs a fresh gesture',
+    async decision => {
+      const source = await openWorkspace(false);
+      const { queryPermission } = selectNextWorkspace(source, 'prompt');
+      vi.useFakeTimers();
+      const original = source.files.get('A.md');
+      editText('Gesture-required draft [[B]]');
+      const state = editor().state;
+      source.requestPermission.mockClear();
+      const switching = button('List Markdown Notes').click();
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(queryPermission).toHaveBeenCalledTimes(1);
+      expect(source.requestPermission).not.toHaveBeenCalled();
+      expect(source.write).not.toHaveBeenCalled();
+      let inGesture = true;
+      source.requestPermission.mockImplementation(async () => {
+        expect(inGesture).toBe(true);
+        return 'granted';
+      });
+      const choosing = dialogButton(decision).click();
+      inGesture = false;
+      expect(source.requestPermission).toHaveBeenCalledTimes(
+        decision === 'Save' ? 1 : 0
+      );
+      await choosing;
+      await switching;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(source.files.get('A.md')).toBe(
+        decision === 'Save' ? 'Gesture-required draft [[B]]' : original
+      );
+      expect(source.write).toHaveBeenCalledTimes(decision === 'Save' ? 1 : 0);
+      expect(editor().state === state).toBe(decision === 'Cancel');
+      expect(browser.storage.setItem).not.toHaveBeenCalled();
+      source.requestPermission.mockResolvedValue('granted');
+    }
+  );
+
+  it.each(['denied', 'unavailable', 'error'])(
+    'falls back without trusting cached permission when query is %s',
+    async state => {
+      const source = await openWorkspace(false);
+      const { queryPermission } = selectNextWorkspace(
+        source,
+        state === 'denied' ? 'denied' : state === 'error' ? 'granted' : null
+      );
+      if (state === 'error')
+        queryPermission.mockRejectedValue(new Error('Query unsupported'));
+      vi.useFakeTimers();
+      editText('Uncertain permission [[B]]');
+      const original = source.files.get('A.md');
+      const editorState = editor().state;
+      source.requestPermission.mockClear();
+      const switching = button('List Markdown Notes').click();
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(source.write).not.toHaveBeenCalled();
+      expect(source.requestPermission).not.toHaveBeenCalled();
+      await dialogButton('Cancel').click();
+      await switching;
+      expect(editor().state).toBe(editorState);
+      expect(source.files.get('A.md')).toBe(original);
+    }
+  );
+
+  it('drains an in-flight manual Save and newer revisions before switching', async () => {
+    const source = await openWorkspace(false);
+    selectNextWorkspace(source);
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    source.write.mockImplementationOnce(async (name, content) => {
+      await gate.promise;
+      source.files.set(name, content);
+    });
+    editText('Snapshot [[B]]');
+    await button('Save Real File').click();
+    await vi.advanceTimersByTimeAsync(0);
+    editText('Newer workspace revision [[B]]');
+    source.requestPermission.mockClear();
+    const switching = button('List Markdown Notes').click();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(source.write).toHaveBeenCalledTimes(1);
+      expect(editor().state.facet(noteUriFacet)?.path).toBe('/real-notes/A.md');
+      editText('Latest workspace revision [[B]]');
+    } finally {
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await switching;
+    expect(source.files.get('A.md')).toBe('Latest workspace revision [[B]]');
+    expect(source.write).toHaveBeenCalledTimes(2);
+    expect(source.requestPermission).not.toHaveBeenCalled();
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/notes/Welcome.md');
+    await explorerFile('A.md').click();
+    expect(editor().state.doc.toString()).toBe(
+      'Latest workspace revision [[B]]'
+    );
+  });
+
+  it.each(['conflict', 'permission', 'I/O', 'Core'])(
+    'retains source and offers fallback after automatic %s failure',
+    async failure => {
+      const source = await openWorkspace(false);
+      selectNextWorkspace(source);
+      vi.useFakeTimers();
+      editText('Failed workspace draft [[B]]');
+      const state = editor().state;
+      const dispose = vi.spyOn(source.adapter.workspace, 'dispose');
+      if (failure === 'conflict') source.files.set('A.md', 'External A');
+      if (failure === 'permission')
+        source.createWritable.mockRejectedValueOnce(
+          new DOMException('Revoked', 'NotAllowedError')
+        );
+      if (failure === 'I/O')
+        source.write.mockRejectedValueOnce(new Error('Disk failure'));
+      if (failure === 'Core')
+        vi.spyOn(source.adapter, 'updateNote').mockImplementationOnce(() => {
+          throw new Error('Core failure');
+        });
+      source.requestPermission.mockClear();
+      const switching = button('List Markdown Notes').click();
+      await vi.advanceTimersByTimeAsync(0);
+      await waitForDialog();
+      expect(editor().state).toBe(state);
+      expect(dispose).not.toHaveBeenCalled();
+      expect(source.requestPermission).not.toHaveBeenCalled();
+      if (failure === 'Core') {
+        expect(source.files.get('A.md')).toBe('Failed workspace draft [[B]]');
+        await dialogButton('Save').click();
+        await switching;
+        expect(source.write).toHaveBeenCalledTimes(1);
+        expect(source.requestPermission).not.toHaveBeenCalled();
+      } else {
+        await dialogButton('Cancel').click();
+        await switching;
+        expect(editor().state).toBe(state);
+        expect(dispose).not.toHaveBeenCalled();
+        if (failure === 'conflict')
+          expect(source.files.get('A.md')).toBe('External A');
+      }
+    }
+  );
+
+  it.each(['load', 'Core init'])(
+    'keeps the source workspace alive on target %s failure',
+    async failure => {
+      const source = await openWorkspace(false);
+      const { target } = selectNextWorkspace(source);
+      vi.useFakeTimers();
+      editText('Do not lose this draft [[B]]');
+      const state = editor().state;
+      const dispose = vi.spyOn(source.adapter.workspace, 'dispose');
+      if (failure === 'load')
+        vi.spyOn(target, 'entries').mockImplementation(async function* () {
+          throw new Error('Cannot read folder');
+        });
+      if (failure === 'Core init')
+        vi.spyOn(
+          FoamCoreAdapter,
+          'createFromMarkdownFiles'
+        ).mockRejectedValueOnce(new Error('Cannot initialize Core'));
+      await button('List Markdown Notes').click();
+      expect(editor().state).toBe(state);
+      expect(editor().state.facet(realLinkNavigationContext)?.adapter).toBe(
+        source.adapter
+      );
+      expect(dispose).not.toHaveBeenCalled();
+      editText('Still editable after target failure [[B]]');
+      await vi.advanceTimersByTimeAsync(750);
+      expect(source.files.get('A.md')).toBe(
+        'Still editable after target failure [[B]]'
+      );
+    }
+  );
+
+  it('retries Core-only synchronization without querying permission or rewriting disk', async () => {
+    const source = await openWorkspace(false);
+    const { queryPermission } = selectNextWorkspace(source, 'denied');
+    vi.useFakeTimers();
+    vi.spyOn(source.adapter, 'updateNote').mockImplementationOnce(() => {
+      throw new Error('Core unavailable');
+    });
+    editText('Disk persisted before switch [[B]]');
+    await vi.advanceTimersByTimeAsync(750);
+    source.requestPermission.mockClear();
+    await button('List Markdown Notes').click();
+    expect(queryPermission).not.toHaveBeenCalled();
+    expect(source.requestPermission).not.toHaveBeenCalled();
+    expect(source.write).toHaveBeenCalledTimes(1);
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/notes/Welcome.md');
+  });
+
+  it('switches mixed read-only notes without write access and keeps Sample edits isolated', async () => {
+    const source = await openWorkspace(false);
+    source.files.set('B.md', '# Mixed\r\nLF\nEnd');
+    await explorerFile('B.md').click();
+    const { queryPermission } = selectNextWorkspace(source, 'denied');
+    source.requestPermission.mockClear();
+    await button('List Markdown Notes').click();
+    expect(queryPermission).not.toHaveBeenCalled();
+    expect(source.requestPermission).not.toHaveBeenCalled();
+    expect(source.write).not.toHaveBeenCalled();
+    editText(
+      editor().state.doc.toString() + '\nSample only after workspace switch'
+    );
+    expect(browser.storage.setItem).toHaveBeenCalled();
+    expect(source.files.get('B.md')).toBe('# Mixed\r\nLF\nEnd');
+  });
+
+  it('switches a clean editable source without querying or requesting write permission', async () => {
+    const source = await openWorkspace(false);
+    const { queryPermission } = selectNextWorkspace(source, 'denied');
+    source.requestPermission.mockClear();
+    await button('List Markdown Notes').click();
+    expect(queryPermission).not.toHaveBeenCalled();
+    expect(source.requestPermission).not.toHaveBeenCalled();
+    expect(source.write).not.toHaveBeenCalled();
+    expect(editor().state.facet(noteUriFacet)?.path).toBe('/notes/Welcome.md');
+  });
+
+  it('aborts a permission query made stale by a newer draft and resumes Auto-save', async () => {
+    const source = await openWorkspace(false);
+    const { queryPermission } = selectNextWorkspace(source);
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    queryPermission.mockImplementationOnce(async () => {
+      await gate.promise;
+      return 'granted';
+    });
+    editText('Before query [[B]]');
+    const switching = button('List Markdown Notes').click();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(queryPermission).toHaveBeenCalledTimes(1);
+      editText('Newer during query [[B]]');
+    } finally {
+      gate.resolve();
+    }
+    await switching;
+    expect(editor().state.doc.toString()).toBe('Newer during query [[B]]');
+    expect(editor().state.facet(realLinkNavigationContext)?.adapter).toBe(
+      source.adapter
+    );
+    expect(source.write).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(750);
+    expect(source.files.get('A.md')).toBe('Newer during query [[B]]');
+  });
+
+  it('disposes only the prepared workspace when Core preparation becomes stale', async () => {
+    const source = await openWorkspace(false);
+    selectNextWorkspace(source);
+    vi.useFakeTimers();
+    const gate = pendingWrite();
+    const create = FoamCoreAdapter.createFromMarkdownFiles;
+    let prepared: FoamCoreAdapter | undefined;
+    let preparedDispose: ReturnType<typeof vi.spyOn> | undefined;
+    vi.spyOn(FoamCoreAdapter, 'createFromMarkdownFiles').mockImplementationOnce(
+      async notes => {
+        prepared = await create(notes);
+        preparedDispose = vi.spyOn(prepared.workspace, 'dispose');
+        await gate.promise;
+        return prepared;
+      }
+    );
+    const sourceDispose = vi.spyOn(source.adapter.workspace, 'dispose');
+    editText('Persist before preparation [[B]]');
+    const switching = button('List Markdown Notes').click();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(prepared).toBeDefined();
+      editText('New draft during Core preparation [[B]]');
+    } finally {
+      gate.resolve();
+    }
+    await switching;
+    expect(sourceDispose).not.toHaveBeenCalled();
+    expect(preparedDispose).toHaveBeenCalledTimes(1);
+    expect(editor().state.facet(realLinkNavigationContext)?.adapter).toBe(
+      source.adapter
+    );
+    expect(editor().state.doc.toString()).toBe(
+      'New draft during Core preparation [[B]]'
+    );
+    await vi.advanceTimersByTimeAsync(750);
+    expect(source.files.get('A.md')).toBe(
+      'New draft during Core preparation [[B]]'
+    );
+  });
 });
 
 describe('Explorer automatic save-before-navigation', () => {
@@ -2050,7 +2422,7 @@ describe('real-file auto-save integration', () => {
     );
   });
 
-  it.each(['Picker', 'Workspace'])(
+  it.each(['Picker'])(
     'blocks %s departure during an in-flight save',
     async path => {
       const { files, write } = await openWorkspace(false);
@@ -2064,7 +2436,6 @@ describe('real-file auto-save integration', () => {
       await vi.advanceTimersByTimeAsync(750);
       const source = editor().state;
       if (path === 'Picker') await pickerOpenNote('B.md').click();
-      if (path === 'Workspace') await button('List Markdown Notes').click();
       await vi.advanceTimersByTimeAsync(0);
       expect(editor().state).toBe(source);
       expect(browser.window.alert).toHaveBeenCalledWith(
@@ -2142,13 +2513,17 @@ describe('real-file auto-save integration', () => {
     editText('New draft during folder read');
     gate.resolve();
     await vi.advanceTimersByTimeAsync(0);
-    // Choosing Cancel must remain possible; background saves cannot consume it.
-    await waitForDialog();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(write).not.toHaveBeenCalled();
-    await dialogButton('Cancel').click();
     await switching;
     expect(editor().state.doc.toString()).toBe('New draft during folder read');
+    expect(write).not.toHaveBeenCalled();
+    expect(browser.window.alert).toHaveBeenCalledWith(
+      expect.stringContaining('Workspace switching was cancelled')
+    );
+    await vi.advanceTimersByTimeAsync(750);
+    expect(write).toHaveBeenCalledExactlyOnceWith(
+      'A.md',
+      'New draft during folder read'
+    );
   });
 
   it('keeps sample editing in localStorage after leaving a real session', async () => {
